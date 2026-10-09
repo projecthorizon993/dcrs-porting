@@ -154,39 +154,39 @@ jobs:
       - name: Write release notes
         run: |
           cat > notes.md <<'NOTES'
-## dcrs-port
+          ## dcrs-port
 
-The porting tool. It analyzes Discord themes and mods, reports how portable they are to a
-native client, and converts a BetterDiscord or Vencord theme into a native Serein
-`.serein-extension` package.
+          The porting tool. It analyzes Discord themes and mods, reports how portable they are to a
+          native client, and converts a BetterDiscord or Vencord theme into a native Serein
+          `.serein-extension` package.
 
-### Downloading
+          ### Downloading
 
-Bare executables, no installer and no archive:
+          Bare executables, no installer and no archive:
 
-| File | Platform |
-| --- | --- |
-| `dcrs-port-windows-x86_64.exe` | Windows 64-bit |
-| `dcrs-port-linux-x86_64` | Linux 64-bit |
-| `dcrs-port-macos-aarch64` | macOS Apple Silicon |
+          | File | Platform |
+          | --- | --- |
+          | `dcrs-port-windows-x86_64.exe` | Windows 64-bit |
+          | `dcrs-port-linux-x86_64` | Linux 64-bit |
+          | `dcrs-port-macos-aarch64` | macOS Apple Silicon |
 
-On Linux and macOS, mark it executable first: `chmod +x dcrs-port-linux-x86_64`.
+          On Linux and macOS, mark it executable first: `chmod +x dcrs-port-linux-x86_64`.
 
-The capability registry and class map are compiled in, so there are no data files to fetch
-alongside it.
+          The capability registry and class map are compiled in, so there are no data files to fetch
+          alongside it.
 
-### Trying it
+          ### Trying it
 
-```sh
-dcrs-port plugin    my-mod.ts          # what APIs it uses, and which are replicable
-dcrs-port effects   my-mod.ts          # what it does, independent of how
-dcrs-port media     my-mod.ts          # what it does with media, and whether that ports
-dcrs-port theme     my-theme.css       # what the CSS is made of
-dcrs-port convert   my-theme.css       # writes a .serein-extension package
-dcrs-port coverage                      # what the capability registry knows
-```
+          ```sh
+          dcrs-port plugin    my-mod.ts          # what APIs it uses, and which are replicable
+          dcrs-port effects   my-mod.ts          # what it does, independent of how
+          dcrs-port media     my-mod.ts          # what it does with media, and whether that ports
+          dcrs-port theme     my-theme.css       # what the CSS is made of
+          dcrs-port convert   my-theme.css       # writes a .serein-extension package
+          dcrs-port coverage                      # what the capability registry knows
+          ```
 
-Add `--json` to any command for machine-readable output. `effects` and `media` exit non-zero
+          Add `--json` to any command for machine-readable output. `effects` and `media` exit non-zero
           when a plugin does something that does not port, so they can gate a pipeline rather than
           only inform one.
 
