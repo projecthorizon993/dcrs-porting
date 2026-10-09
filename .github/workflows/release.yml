@@ -127,7 +127,9 @@ jobs:
           # the notes tell people to chmod.
           if [ "${{ runner.os }}" != "Windows" ]; then chmod +x "$name"; fi
           echo "ASSET=$name" >> "$GITHUB_ENV"
-          "$name" --version
+          # `./` matters: bash does not put the working directory on PATH, so a bare relative
+          # name is "command not found" even when the file is right there and executable.
+          "./$name" --version
 
       - uses: actions/upload-artifact@v4
         with:
