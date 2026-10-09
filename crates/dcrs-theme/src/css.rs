@@ -181,7 +181,10 @@ impl Stylesheet {
     /// # Errors
     /// Returns [`ParseError::UnterminatedRule`] if the input ends inside a rule.
     pub fn parse(input: &str) -> Result<Self, ParseError> {
-        let stripped = strip_comments(input);
+        // A byte-order mark would otherwise be glued to the first selector, turning `:root` into
+        // something unrecognised and silently dropping every root-scoped declaration. Files saved by
+        // Windows editors routinely carry one.
+        let stripped = strip_comments(input.trim_start_matches('\u{feff}'));
         let mut rules = Vec::new();
         let mut order = 0usize;
 
@@ -798,6 +801,14 @@ mod tests {
         let sheet = parse("/* header */\n:root {\n  --a:   1px;\n  /* mid */\n  --b: 2px;\n}");
         assert_eq!(sheet.len(), 1);
         assert_eq!(sheet.rules()[0].declarations.len(), 2);
+    }
+
+    #[test]
+    fn a_byte_order_mark_does_not_hide_the_root_block() {
+        // Windows editors save with a BOM, and without this the first selector parses as
+        // `\u{feff} :root`, which matches no scope — so every root declaration vanishes silently.
+        let sheet = parse("\u{feff}:root { --a: #111111; }");
+        assert_eq!(sheet.rules()[0].scopes(), vec![Scope::Root]);
     }
 
     #[test]

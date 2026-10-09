@@ -5,6 +5,7 @@ members = [
     "crates/dcrs-compat",
     "crates/dcrs-plugins",
     "crates/dcrs-core",
+    "crates/dcrs-serein",
     "crates/dcrs-port",
 ]
 
@@ -20,6 +21,7 @@ dcrs-theme = { path = "crates/dcrs-theme", version = "0.1.0" }
 dcrs-compat = { path = "crates/dcrs-compat", version = "0.1.0" }
 dcrs-plugins = { path = "crates/dcrs-plugins", version = "0.1.0" }
 dcrs-core = { path = "crates/dcrs-core", version = "0.1.0" }
+dcrs-serein = { path = "crates/dcrs-serein", version = "0.1.0" }
 
 cssparser = "0.31"
 serde = { version = "1", features = ["derive"] }
@@ -43,6 +45,11 @@ missing_errors_doc = "allow"
 missing_panics_doc = "allow"
 cast_possible_truncation = "allow"
 cast_precision_loss = "allow"
+# Channel values are clamped into `0.0..=255.0` immediately before the cast, so the sign bit is
+# unreachable by construction.
+cast_sign_loss = "allow"
+# Product names like BetterDiscord and Serein trip the backtick heuristic but should stay readable.
+doc_markdown = "allow"
 
 [profile.release]
 opt-level = 3

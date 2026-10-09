@@ -6,6 +6,10 @@ rust-version.workspace = true
 license.workspace = true
 description = "Analyzes Discord themes and mods and reports how portable they are to a native client"
 
+[lib]
+name = "dcrs_port"
+path = "src/lib.rs"
+
 [[bin]]
 name = "dcrs-port"
 path = "src/main.rs"
@@ -16,6 +20,7 @@ workspace = true
 [dependencies]
 dcrs-theme.workspace = true
 dcrs-compat.workspace = true
+dcrs-serein.workspace = true
 anyhow.workspace = true
 clap.workspace = true
 serde.workspace = true

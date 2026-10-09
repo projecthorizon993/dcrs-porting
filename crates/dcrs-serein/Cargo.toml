@@ -1,0 +1,16 @@
+[package]
+name = "dcrs-serein"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Convert BetterDiscord and Vencord themes into native Serein theme packages, with no CSS injection"
+
+[lints]
+workspace = true
+
+[dependencies]
+dcrs-theme.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true

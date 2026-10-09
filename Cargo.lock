@@ -289,6 +289,17 @@ dependencies = [
  "anyhow",
  "clap",
  "dcrs-compat",
+ "dcrs-serein",
+ "dcrs-theme",
+ "serde",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
+name = "dcrs-serein"
+version = "0.1.0"
+dependencies = [
  "dcrs-theme",
  "serde",
  "serde_json",

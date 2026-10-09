@@ -35,11 +35,13 @@
 #![warn(missing_debug_implementations)]
 
 pub mod classmap;
+pub mod color;
 pub mod css;
 pub mod shadow;
 pub mod theme;
 
 pub use classmap::{ClassMap, ClassMapError, Surface};
+pub use color::{ColorError, Rgba};
 pub use css::{ParseError, ResolveError, Stylesheet, ThemeKind, Variables};
 pub use shadow::{ShadowNode, ShadowTree};
 pub use theme::Theme;
