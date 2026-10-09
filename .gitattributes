@@ -1,0 +1,14 @@
+# Force LF everywhere. `rustfmt.toml` sets `newline_style = "Unix"`, so a CRLF
+# checkout makes `cargo fmt --check` fail on Windows only, which is a confusing
+# way to discover the problem.
+* text=auto eol=lf
+
+# Keep the generated lockfile diffable rather than CRLF-churned.
+Cargo.lock text eol=lf
+
+# Binary assets.
+*.png binary
+*.ico binary
+*.icns binary
+*.woff binary
+*.woff2 binary
