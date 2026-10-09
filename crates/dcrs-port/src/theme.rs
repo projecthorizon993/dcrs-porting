@@ -163,7 +163,7 @@ pub fn analyze(source: &str, map: &ClassMap) -> ThemeReport {
         if rule
             .declarations
             .iter()
-            .any(|d| dcrs_theme::css::extract_var_refs(&d.value).len() > 1)
+            .any(|d| dcrs_theme::css::count_var_refs(&d.value) > 1)
         {
             *tiers.entry(Tier::VarRefs.as_str().to_owned()).or_insert(0) += 1;
         }
@@ -182,13 +182,16 @@ pub fn analyze(source: &str, map: &ClassMap) -> ThemeReport {
         }
     }
 
-    let all = theme.all_classes();
-    let unmapped = theme.unmapped_classes(map);
-    let mapped_classes = all.iter().filter(|c| map.translate(c).is_some()).count();
-
-    for class in &all {
-        let entry = if dcrs_theme::classmap::looks_hashed(class) {
-            if map.translate(class).is_some() {
+    // One pass over the class list. `all_classes` and `unmapped_classes` are the same walk with the same
+    // sort and dedup, and the map lookup was being done twice per class.
+    let mut mapped_classes = 0usize;
+    for class in theme.all_classes() {
+        let translated = map.translate(&class).is_some();
+        if translated {
+            mapped_classes += 1;
+        }
+        let entry = if dcrs_theme::classmap::looks_hashed(&class) {
+            if translated {
                 Tier::Hashed
             } else {
                 continue;
@@ -198,6 +201,7 @@ pub fn analyze(source: &str, map: &ClassMap) -> ThemeReport {
         };
         *tiers.entry(entry.as_str().to_owned()).or_insert(0) += 1;
     }
+    let unmapped = theme.unmapped_classes(map);
 
     // Declared-variable count is available even when resolution fails, so the report can still
     // show that a theme is not empty.

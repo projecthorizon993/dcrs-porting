@@ -23,7 +23,7 @@
 //! use dcrs_core::{IdentifyConfig, Session, SessionConfig, Inbound};
 //!
 //! let mut session = Session::new(SessionConfig::new(IdentifyConfig::new("token", 402_402)));
-//! session.on_frame(&Inbound::hello(41_250));
+//! session.on_frame(Inbound::hello(41_250));
 //! ```
 
 #![forbid(unsafe_code)]

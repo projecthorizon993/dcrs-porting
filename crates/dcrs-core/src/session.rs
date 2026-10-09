@@ -280,8 +280,13 @@ impl Session {
     }
 
     /// Handles one inbound frame.
+    ///
+    /// Takes the frame by value. Every dispatch frame's payload ends up in a [`Notice`], and taking it
+    /// by reference meant deep-copying the whole `serde_json::Value` tree of every message, presence,
+    /// and typing event the client received — the single hottest allocation in the process, since a
+    /// busy session produces several per second.
     #[must_use]
-    pub fn on_frame(&mut self, frame: &Inbound) -> Step {
+    pub fn on_frame(&mut self, frame: Inbound) -> Step {
         let mut step = Step::default();
 
         if let Some(seq) = frame.s {
@@ -351,8 +356,8 @@ impl Session {
         step
     }
 
-    fn handle_dispatch(&mut self, frame: &Inbound, step: &mut Step) {
-        let Some(name) = frame.t.clone() else { return };
+    fn handle_dispatch(&mut self, frame: Inbound, step: &mut Step) {
+        let Some(name) = frame.t else { return };
 
         if name == "READY" {
             if let Some(id) = read_ready_session_id(&frame.d) {
@@ -374,7 +379,7 @@ impl Session {
         step.notices.push(Notice::Event {
             name,
             seq,
-            data: frame.d.clone(),
+            data: frame.d,
         });
     }
 
@@ -549,7 +554,7 @@ mod tests {
     #[test]
     fn hello_triggers_identify_when_not_resumable() {
         let mut s = Session::new(config());
-        let step = s.on_frame(&Inbound::hello(41_250));
+        let step = s.on_frame(Inbound::hello(41_250));
         assert_eq!(step.sent.len(), 1);
         assert!(matches!(step.sent[0], Outbound::Identify { .. }));
         assert!(matches!(s.state(), State::Identifying { session_id: None }));
@@ -562,8 +567,8 @@ mod tests {
     #[test]
     fn hello_triggers_resume_after_ready() {
         let mut s = Session::new(config());
-        let _ = s.on_frame(&Inbound::hello(1000));
-        let _ = s.on_frame(&ready_frame("sess-1", 42));
+        let _ = s.on_frame(Inbound::hello(1000));
+        let _ = s.on_frame(ready_frame("sess-1", 42));
         assert_eq!(
             s.state(),
             &State::Ready {
@@ -574,7 +579,7 @@ mod tests {
 
         // Simulate a drop, then a reconnect.
         let _ = s.on_disconnect(CloseReason::ReconnectRequested);
-        let step = s.on_frame(&Inbound::hello(1000));
+        let step = s.on_frame(Inbound::hello(1000));
         assert!(
             matches!(&step.sent[0], Outbound::Resume { session_id, seq, .. } if session_id == "sess-1" && *seq == 1),
             "expected Resume, got {:?}",
@@ -586,7 +591,7 @@ mod tests {
     fn ready_reports_a_notice_and_resets_backoff() {
         let mut s = Session::new(config());
         s.config.attempt = 3;
-        let step = s.on_frame(&ready_frame("sess-9", 7));
+        let step = s.on_frame(ready_frame("sess-9", 7));
         assert_eq!(
             step.notices,
             vec![Notice::Ready {
@@ -602,7 +607,7 @@ mod tests {
     fn dispatch_forwards_events_with_sequence() {
         let mut s = Session::new(config());
         let frame = Inbound::dispatch("MESSAGE_CREATE", 17, serde_json::json!({ "id": "1" }));
-        let step = s.on_frame(&frame);
+        let step = s.on_frame(frame);
         match &step.notices[0] {
             Notice::Event { name, seq, data } => {
                 assert_eq!(name, "MESSAGE_CREATE");
@@ -617,10 +622,10 @@ mod tests {
     #[test]
     fn heartbeat_ack_clears_the_due_flag() {
         let mut s = Session::new(config());
-        let _ = s.on_frame(&Inbound::hello(1000));
+        let _ = s.on_frame(Inbound::hello(1000));
         s.arm_heartbeat();
         assert!(s.heartbeat_due());
-        let _ = s.on_frame(&Inbound::heartbeat_ack());
+        let _ = s.on_frame(Inbound::heartbeat_ack());
         assert!(!s.heartbeat_due());
         assert_eq!(s.take_heartbeat_due(), None);
     }
@@ -628,8 +633,8 @@ mod tests {
     #[test]
     fn heartbeat_is_only_emitted_when_due() {
         let mut s = Session::new(config());
-        let _ = s.on_frame(&Inbound::hello(1000));
-        let _ = s.on_frame(&ready_frame("s", 1));
+        let _ = s.on_frame(Inbound::hello(1000));
+        let _ = s.on_frame(ready_frame("s", 1));
         assert_eq!(s.take_heartbeat_due(), None);
 
         s.arm_heartbeat();
@@ -651,9 +656,9 @@ mod tests {
     #[test]
     fn server_heartbeat_request_is_answered() {
         let mut s = Session::new(config());
-        let _ = s.on_frame(&Inbound::hello(1000));
-        let _ = s.on_frame(&ready_frame("s", 1));
-        let step = s.on_frame(&Inbound {
+        let _ = s.on_frame(Inbound::hello(1000));
+        let _ = s.on_frame(ready_frame("s", 1));
+        let step = s.on_frame(Inbound {
             op: Some(OpCode::Heartbeat.code()),
             t: None,
             s: None,
@@ -665,9 +670,9 @@ mod tests {
     #[test]
     fn reconnect_opcode_schedules_a_retry() {
         let mut s = Session::new(config());
-        let _ = s.on_frame(&Inbound::hello(1000));
-        let _ = s.on_frame(&ready_frame("sess-2", 1));
-        let step = s.on_frame(&Inbound::reconnect());
+        let _ = s.on_frame(Inbound::hello(1000));
+        let _ = s.on_frame(ready_frame("sess-2", 1));
+        let step = s.on_frame(Inbound::reconnect());
         assert!(s.server_requested_reconnect());
         assert_eq!(s.state(), &State::Reconnecting { attempt: 1 });
         match &step.notices[0] {
@@ -687,8 +692,8 @@ mod tests {
     #[test]
     fn non_resumable_disconnect_drops_the_session() {
         let mut s = Session::new(config());
-        let _ = s.on_frame(&Inbound::hello(1000));
-        let _ = s.on_frame(&ready_frame("sess-3", 1));
+        let _ = s.on_frame(Inbound::hello(1000));
+        let _ = s.on_frame(ready_frame("sess-3", 1));
         let step = s.on_disconnect(CloseReason::SessionInvalidated);
         assert_eq!(s.session_id(), None);
         assert_eq!(s.seq(), None);
@@ -701,8 +706,8 @@ mod tests {
     #[test]
     fn resumable_disconnect_keeps_the_session() {
         let mut s = Session::new(config());
-        let _ = s.on_frame(&Inbound::hello(1000));
-        let _ = s.on_frame(&ready_frame("sess-4", 1));
+        let _ = s.on_frame(Inbound::hello(1000));
+        let _ = s.on_frame(ready_frame("sess-4", 1));
         let _ = s.on_disconnect(CloseReason::ServerError);
         assert_eq!(s.session_id(), Some("sess-4"));
         assert_eq!(s.seq(), Some(1));
@@ -753,18 +758,18 @@ mod tests {
     #[test]
     fn invalid_session_resumable_keeps_the_session() {
         let mut s = Session::new(config());
-        let _ = s.on_frame(&Inbound::hello(1000));
-        let _ = s.on_frame(&ready_frame("sess-5", 1));
-        let _ = s.on_frame(&Inbound::invalid_session(true));
+        let _ = s.on_frame(Inbound::hello(1000));
+        let _ = s.on_frame(ready_frame("sess-5", 1));
+        let _ = s.on_frame(Inbound::invalid_session(true));
         assert_eq!(s.session_id(), Some("sess-5"));
     }
 
     #[test]
     fn invalid_session_fatal_drops_the_session() {
         let mut s = Session::new(config());
-        let _ = s.on_frame(&Inbound::hello(1000));
-        let _ = s.on_frame(&ready_frame("sess-6", 1));
-        let _ = s.on_frame(&Inbound::invalid_session(false));
+        let _ = s.on_frame(Inbound::hello(1000));
+        let _ = s.on_frame(ready_frame("sess-6", 1));
+        let _ = s.on_frame(Inbound::invalid_session(false));
         assert_eq!(s.session_id(), None);
     }
 
@@ -793,7 +798,7 @@ mod tests {
     #[test]
     fn unknown_frames_are_ignored() {
         let mut s = Session::new(config());
-        let step = s.on_frame(&Inbound {
+        let step = s.on_frame(Inbound {
             op: Some(99),
             t: None,
             s: Some(3),
@@ -849,11 +854,11 @@ mod tests {
         let step = s.on_connected();
         assert_eq!(step.sent, Vec::new(), "the gateway speaks first");
 
-        let _ = s.on_frame(&Inbound::hello(41_250));
+        let _ = s.on_frame(Inbound::hello(41_250));
         assert!(matches!(s.state(), State::Identifying { .. }));
 
         s.arm_heartbeat();
-        let _ = s.on_frame(&ready_frame("final", 99));
+        let _ = s.on_frame(ready_frame("final", 99));
         assert_eq!(
             s.state(),
             &State::Ready {

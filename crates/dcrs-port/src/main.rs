@@ -187,21 +187,22 @@ fn convert_command(
         .file_stem()
         .map_or_else(|| "theme".to_owned(), |s| s.to_string_lossy().into_owned());
 
-    let mut report = convert::convert(&source_text, &stem)
+    // One parse for the conversion and the image search together; a second parse would hold two copies
+    // of every rule at once.
+    let (mut report, embedded) = convert::convert_file(&source_text, &stem)
         .with_context(|| format!("parsing {}", path.display()))?;
     report.apply(overrides);
 
     let image = match background {
         Some(image_path) => Some(read_image(image_path)?),
-        None => convert::embedded_background(&source_text),
+        None => embedded,
     };
 
     match report.package(image.unwrap_or_default()) {
-        Ok(package) => {
-            let json = package.to_json()?;
+        Ok(built) => {
             let destination =
                 out.map_or_else(|| default_out(path, &report.name), Path::to_path_buf);
-            std::fs::write(&destination, &json)
+            std::fs::write(&destination, &built.json)
                 .with_context(|| format!("writing {}", destination.display()))?;
             if cli.json {
                 let json_report = convert_json(&report, &destination);

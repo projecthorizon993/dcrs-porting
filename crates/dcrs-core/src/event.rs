@@ -200,9 +200,16 @@ impl EventBus {
     /// Publishes and applies to a cache in one step, so the two cannot drift.
     ///
     /// Returns the number of subscribers that received the event.
+    /// Publishes and applies to a cache in one step, so the two cannot drift.
+    ///
+    /// Returns the number of subscribers that received the event.
     pub fn publish_to(&self, cache: &crate::cache::Cache, event: Event) -> usize {
-        cache.apply(&event);
-        self.publish(event)
+        // The cache consumes the event; the bus needs its own copy. Cloning once here is cheaper than
+        // letting the cache clone every entity out of a borrowed event, which is what a large
+        // `GUILD_CREATE` is made of.
+        let received = self.publish(event.clone());
+        cache.apply(event);
+        received
     }
 }
 

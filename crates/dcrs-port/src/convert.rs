@@ -8,7 +8,7 @@
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
 
-use dcrs_serein::{Conversion, Dropped, Identity, Package};
+use dcrs_serein::{Conversion, Dropped, Identity};
 
 /// Identity fields supplied on the command line.
 ///
@@ -48,7 +48,7 @@ pub struct ConversionReport {
 }
 
 impl ConversionReport {
-    /// Builds a package from this report.
+    /// Builds a package from this report, serialized once.
     ///
     /// Rebuilding on demand rather than holding one alongside the report is deliberate: a converter
     /// that produced a report and a separate package risks the two disagreeing about what happened.
@@ -56,8 +56,11 @@ impl ConversionReport {
     /// # Errors
     /// Propagates whatever the host would reject: an invalid theme, a bad manifest field, or an
     /// oversized image.
-    pub fn package(&self, background_image: Vec<u8>) -> Result<Package, dcrs_serein::PackageError> {
-        dcrs_serein::Package::build_with_image(self.identity(), &self.conversion, background_image)
+    pub fn package(
+        &self,
+        background_image: Vec<u8>,
+    ) -> Result<dcrs_serein::Built, dcrs_serein::PackageError> {
+        dcrs_serein::Package::build_serialized(self.identity(), &self.conversion, background_image)
     }
 
     /// The identity a package built from this report would carry.
@@ -184,12 +187,26 @@ pub fn convert(
     fallback_name: &str,
 ) -> Result<ConversionReport, dcrs_theme::ParseError> {
     let sheet = dcrs_theme::Stylesheet::parse(source)?;
+    Ok(convert_parsed(source, &sheet, fallback_name))
+}
+
+/// Converts an already-parsed stylesheet.
+///
+/// Taking the [`dcrs_theme::Stylesheet`] rather than the source text is what keeps a conversion to one
+/// parse. Parsing twice — once to convert, once to look for a background image — rebuilt hundreds of
+/// rules and their declarations and held them alive at the same time, roughly doubling peak memory
+/// for a 50 KB input.
+pub fn convert_parsed(
+    source: &str,
+    sheet: &dcrs_theme::Stylesheet,
+    fallback_name: &str,
+) -> ConversionReport {
     let header = dcrs_serein::package::header_metadata(source).unwrap_or_default();
 
     let name = header.name.unwrap_or_else(|| fallback_name.to_owned());
-    let conversion = dcrs_serein::convert(&sheet);
+    let conversion = dcrs_serein::convert(sheet);
 
-    Ok(ConversionReport {
+    ConversionReport {
         name,
         author: header.author,
         license: header.license,
@@ -197,7 +214,23 @@ pub fn convert(
         source: header.source,
         conversion,
         failure: None,
-    })
+    }
+}
+
+/// Converts a theme and returns the report alongside any background image already in the source.
+///
+/// One parse for both, which is the whole point: a caller that wants a package with an embedded
+/// image should not have to parse the file twice or hold two copies of its rules at once.
+///
+/// # Errors
+/// Returns an error if the CSS cannot be parsed.
+pub fn convert_file(
+    source: &str,
+    fallback_name: &str,
+) -> Result<(ConversionReport, Option<Vec<u8>>), dcrs_theme::ParseError> {
+    let sheet = dcrs_theme::Stylesheet::parse(source)?;
+    let background = embedded_background_in(&sheet);
+    Ok((convert_parsed(source, &sheet, fallback_name), background))
 }
 
 /// Reads an embedded background image out of theme CSS.
@@ -208,12 +241,22 @@ pub fn convert(
 ///
 /// Only `data:` URLs are resolved here, because they are already in the file; a relative or remote URL
 /// needs a network fetch, which is the caller's decision, not this function's.
+///
+/// # Errors
+/// Returns the parse error if the CSS cannot be read.
 #[must_use]
 pub fn embedded_background(source: &str) -> Option<Vec<u8>> {
     let sheet = dcrs_theme::Stylesheet::parse(source).ok()?;
+    embedded_background_in(&sheet)
+}
+
+/// The image search over an already-parsed stylesheet.
+fn embedded_background_in(sheet: &dcrs_theme::Stylesheet) -> Option<Vec<u8>> {
     for rule in sheet.rules() {
         for decl in &rule.declarations {
-            if decl.property != "background-image" && !decl.property.starts_with("background") {
+            // Covers `background-image` and the `background` shorthand; a `background-color` cannot
+            // hold a URL and is filtered out by the parser rather than tested here.
+            if !decl.property.starts_with("background") {
                 continue;
             }
             if let Some(bytes) = data_url_bytes(&decl.value) {

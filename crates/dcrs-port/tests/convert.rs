@@ -143,7 +143,7 @@ fn a_realistic_theme_converts_to_an_installable_package() {
     --brand-experiment: #5865f2;
 }";
     let report = convert(css);
-    let package = report.package(Vec::new()).expect("should build");
+    let package = report.package(Vec::new()).expect("should build").package;
 
     assert_acceptable(&package);
     assert_eq!(package.manifest.name, "Example Theme");
@@ -173,7 +173,7 @@ fn a_monochrome_theme_still_gets_distinct_surfaces() {
     // projection only copies what it finds.
     let css = ":root { --background-primary: #1e1f22; }";
     let report = convert(css);
-    let package = report.package(Vec::new()).expect("should build");
+    let package = report.package(Vec::new()).expect("should build").package;
     assert_acceptable(&package);
 
     let colors = &package.theme.dark.colors;
@@ -200,7 +200,8 @@ fn an_out_of_range_metric_is_reported_rather_than_emitted() {
     );
     let package = report
         .package(Vec::new())
-        .expect("builds, having dropped the metric");
+        .expect("builds, having dropped the metric")
+        .package;
     assert_eq!(package.theme.style.body_size, None);
     assert_acceptable(&package);
 }
@@ -224,7 +225,7 @@ fn hsl_and_var_layering_survive() {
     --background-primary: #1e1f22;
 }";
     let report = convert(css);
-    let package = report.package(Vec::new()).expect("should build");
+    let package = report.package(Vec::new()).expect("should build").package;
     assert_acceptable(&package);
     // hsl(235 86% 66%) is rgb(94, 106, 243).
     assert_eq!(
@@ -238,7 +239,7 @@ fn a_header_only_theme_still_produces_attribution() {
     let css =
         "/* @name Just A Name @author Just A Person */\n:root { --background-primary: #111111; }";
     let report = convert(css);
-    let package = report.package(Vec::new()).expect("should build");
+    let package = report.package(Vec::new()).expect("should build").package;
     assert_eq!(package.manifest.name, "Just A Name");
     assert_eq!(package.manifest.author, "Just A Person");
 }
@@ -253,7 +254,7 @@ fn explicit_flags_beat_the_themes_own_header() {
         author: Some("Flag Author".to_owned()),
         ..dcrs_port::convert::Overrides::default()
     });
-    let package = report.package(Vec::new()).expect("should build");
+    let package = report.package(Vec::new()).expect("should build").package;
     assert_eq!(package.manifest.name, "From Flag");
     assert_eq!(package.manifest.author, "Flag Author");
 }

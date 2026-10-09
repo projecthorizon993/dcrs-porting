@@ -5,7 +5,7 @@
 //! reach through typed handles. That is what this module is, and it is what
 //! `dcrs-compat`'s class (a) surfaces resolve against.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 use crate::event::Event;
@@ -142,22 +142,97 @@ impl Cache {
     }
 }
 
+/// How many messages to keep per channel.
+///
+/// A busy channel produces a message every few seconds, so an unbounded store grows for the length
+/// of a session and never shrinks: `MESSAGE_DELETE` is the only thing that removes an entry, and
+/// messages that scroll out of a viewable window are not deleted, they are just never sent again.
+/// This bound is well above what a conversation view shows at once, so eviction is invisible while
+/// the memory stays flat.
+pub const MAX_MESSAGES_PER_CHANNEL: usize = 200;
+
 #[derive(Debug, Default)]
 struct CacheInner {
     users: BTreeMap<Snowflake, User>,
     guilds: BTreeMap<Snowflake, Guild>,
     channels: BTreeMap<Snowflake, Channel>,
+    /// Keyed by message id, which is also its creation time, so iteration is oldest-first.
     messages: BTreeMap<Snowflake, Message>,
+    /// Message ids per channel in arrival order, so evicting the oldest is a pop rather than a scan.
+    messages_by_channel: BTreeMap<Snowflake, VecDeque<Snowflake>>,
     /// Keyed by `(guild_id, user_id)`.
     members: BTreeMap<(Snowflake, Snowflake), Member>,
     /// Guild ids in the order the user arranged them.
     guild_order: Vec<Snowflake>,
+    /// The same ids as a set, so membership is a lookup rather than a scan.
+    guild_order_set: BTreeSet<Snowflake>,
     /// Unread flags, keyed by `(guild_id, channel_id)`.
     unread: BTreeMap<(Snowflake, Snowflake), bool>,
     /// The authenticated user.
     self_id: Snowflake,
     /// Bumped on every mutation, so a UI can cheaply detect staleness.
     revision: u64,
+}
+
+impl CacheInner {
+    /// Records a message and evicts the channel's oldest once it exceeds the cap.
+    fn record_message(&mut self, message: Message) {
+        let channel_id = message.channel_id;
+        let id = message.id;
+        self.messages.insert(id, message);
+        let order = self.messages_by_channel.entry(channel_id).or_default();
+        // A repeat of an id we already hold must not be double-counted, or the order drifts out of
+        // step with the store and eviction starts removing the wrong message.
+        if order.back() == Some(&id) {
+            self.trim_channel(channel_id);
+            return;
+        }
+        order.push_back(id);
+        self.trim_channel(channel_id);
+    }
+
+    /// Drops a channel's oldest messages until it is back within the cap.
+    fn trim_channel(&mut self, channel_id: Snowflake) {
+        let Some(order) = self.messages_by_channel.get_mut(&channel_id) else {
+            return;
+        };
+        let mut evicted = Vec::new();
+        while order.len() > MAX_MESSAGES_PER_CHANNEL {
+            match order.pop_front() {
+                Some(id) => evicted.push(id),
+                None => break,
+            }
+        }
+        if order.is_empty() {
+            self.messages_by_channel.remove(&channel_id);
+        }
+        for id in evicted {
+            self.messages.remove(&id);
+        }
+    }
+
+    /// Removes every message belonging to a channel.
+    fn drop_channel_messages(&mut self, channel_id: Snowflake) {
+        let Some(order) = self.messages_by_channel.remove(&channel_id) else {
+            return;
+        };
+        for id in order {
+            self.messages.remove(&id);
+        }
+    }
+
+    /// Removes every message belonging to any of a guild's channels.
+    fn drop_guild_messages(&mut self, guild_id: Snowflake) {
+        let doomed: Vec<Snowflake> = self
+            .messages_by_channel
+            .keys()
+            .copied()
+            .filter(|channel| self.channels.get(channel).and_then(|c| c.guild_id) == Some(guild_id))
+            .collect();
+        for channel in doomed {
+            self.drop_channel_messages(channel);
+        }
+    }
 }
 
 /// The store surface ids this cache implements.
@@ -306,6 +381,12 @@ impl Cache {
             .collect()
     }
 
+    /// Guild ids in the order the user arranged them.
+    #[must_use]
+    pub fn guild_order(&self) -> Vec<Snowflake> {
+        self.read().map_or_else(Vec::new, |g| g.guild_order.clone())
+    }
+
     /// Whether a channel is marked unread.
     #[must_use]
     pub fn is_unread(&self, guild_id: Snowflake, channel_id: Snowflake) -> bool {
@@ -333,7 +414,7 @@ impl Cache {
     /// Inserts or replaces a guild.
     pub fn put_guild(&self, guild: Guild) {
         if let Some(mut g) = self.write() {
-            if !g.guild_order.contains(&guild.id) {
+            if g.guild_order_set.insert(guild.id) {
                 g.guild_order.push(guild.id);
             }
             g.guilds.insert(guild.id, guild);
@@ -342,10 +423,18 @@ impl Cache {
     }
 
     /// Removes a guild and everything under it.
+    ///
+    /// Messages are dropped along with the rest. Leaving them behind is not a small leak: a guild can
+    /// carry hundreds of channels, and a session that cycles through guilds would accumulate every
+    /// message ever sent in all of them for the life of the process.
     pub fn remove_guild(&self, id: Snowflake) {
         if let Some(mut g) = self.write() {
+            // Before pruning channels, since the message sweep needs to know which belonged to this
+            // guild.
+            g.drop_guild_messages(id);
             g.guilds.remove(&id);
             g.guild_order.retain(|gid| *gid != id);
+            g.guild_order_set.remove(&id);
             g.channels.retain(|_, c| c.guild_id != Some(id));
             g.members.retain(|(gid, _), _| *gid != id);
             g.unread.retain(|(gid, _), _| *gid != id);
@@ -360,13 +449,15 @@ impl Cache {
     pub fn set_guild_order(&self, order: Vec<Snowflake>) {
         if let Some(mut g) = self.write() {
             let known: Vec<Snowflake> = g.guilds.keys().copied().collect();
-            let mut merged = order;
-            for id in known {
-                if !merged.contains(&id) {
+            let mut merged = Vec::with_capacity(known.len().max(order.len()));
+            let mut seen = BTreeSet::new();
+            for id in order.into_iter().chain(known) {
+                if seen.insert(id) {
                     merged.push(id);
                 }
             }
             g.guild_order = merged;
+            g.guild_order_set = seen;
             g.revision += 1;
         }
     }
@@ -382,7 +473,7 @@ impl Cache {
     /// Inserts or replaces a message.
     pub fn put_message(&self, message: Message) {
         if let Some(mut g) = self.write() {
-            g.messages.insert(message.id, message);
+            g.record_message(message);
             g.revision += 1;
         }
     }
@@ -390,7 +481,15 @@ impl Cache {
     /// Removes a message.
     pub fn remove_message(&self, id: Snowflake) {
         if let Some(mut g) = self.write() {
-            g.messages.remove(&id);
+            if let Some(message) = g.messages.remove(&id) {
+                let channel_id = message.channel_id;
+                if let Some(order) = g.messages_by_channel.get_mut(&channel_id) {
+                    order.retain(|candidate| *candidate != id);
+                    if order.is_empty() {
+                        g.messages_by_channel.remove(&channel_id);
+                    }
+                }
+            }
             g.revision += 1;
         }
     }
@@ -419,38 +518,50 @@ impl Cache {
     ///
     /// This is the only mutation path the gateway uses, which keeps every cache change traceable
     /// to an event name.
-    pub fn apply(&self, event: &Event) {
+    ///
+    /// Takes the event by value on purpose. A `GUILD_CREATE` for a large guild carries thousands of
+    /// channels and members, and the previous by-reference form cloned every one of them; the source
+    /// `Event` is then dropped immediately after, so the clone was pure waste on the single largest
+    /// frame Discord sends. Whole-store writes happen under one lock acquisition rather than one per
+    /// entity, which also shortens the window a reader can observe a half-built guild in.
+    pub fn apply(&self, event: Event) {
         match event {
-            Event::Ready { user_id, .. } => self.set_self_id(*user_id),
+            Event::Ready { user_id, .. } => self.set_self_id(user_id),
             Event::GuildCreate {
                 guild,
                 channels,
                 members,
             } => {
-                self.put_guild(guild.clone());
-                for c in channels {
-                    self.put_channel(c.clone());
+                let Some(mut g) = self.write() else { return };
+                if g.guild_order_set.insert(guild.id) {
+                    g.guild_order.push(guild.id);
                 }
-                for m in members {
-                    self.put_member(m.clone());
+                g.guilds.insert(guild.id, guild);
+                for channel in channels {
+                    g.channels.insert(channel.id, channel);
                 }
+                for member in members {
+                    g.members.insert((member.guild_id, member.user_id), member);
+                }
+                g.revision += 1;
             }
-            Event::GuildDelete { guild_id } => self.remove_guild(*guild_id),
+            Event::GuildDelete { guild_id } => self.remove_guild(guild_id),
             Event::ChannelCreate { channel } | Event::ChannelUpdate { channel, .. } => {
-                self.put_channel(channel.clone());
+                self.put_channel(channel);
             }
             Event::ChannelDelete { id, .. } => {
                 if let Some(mut g) = self.write() {
-                    g.channels.remove(id);
+                    g.channels.remove(&id);
+                    g.drop_channel_messages(id);
                     g.revision += 1;
                 }
             }
             Event::MessageCreate { message } | Event::MessageUpdate { message, .. } => {
-                self.put_message(message.clone());
+                self.put_message(message);
             }
-            Event::MessageDelete { id, .. } => self.remove_message(*id),
-            Event::GuildMemberAdd { member } => self.put_member(member.clone()),
-            Event::UserUpdate { user } => self.put_user(user.clone()),
+            Event::MessageDelete { id, .. } => self.remove_message(id),
+            Event::GuildMemberAdd { member } => self.put_member(member),
+            Event::UserUpdate { user } => self.put_user(user),
             Event::TypingStart { .. }
             | Event::PresenceUpdate { .. }
             | Event::Unknown { .. }
@@ -682,7 +793,7 @@ mod tests {
     #[test]
     fn apply_ready_sets_self_id() {
         let cache = Cache::new();
-        cache.apply(&Event::Ready {
+        cache.apply(Event::Ready {
             user_id: Snowflake::new(7),
             session_id: "s".to_owned(),
         });
@@ -692,7 +803,7 @@ mod tests {
     #[test]
     fn apply_guild_create_populates_every_store() {
         let cache = Cache::new();
-        cache.apply(&Event::GuildCreate {
+        cache.apply(Event::GuildCreate {
             guild: guild(1),
             channels: vec![channel(10, Some(1), 0)],
             members: vec![member(1, 100)],
@@ -706,7 +817,7 @@ mod tests {
     fn apply_message_delete_removes_it() {
         let cache = Cache::new();
         cache.put_message(message(10, 1));
-        cache.apply(&Event::MessageDelete {
+        cache.apply(Event::MessageDelete {
             id: Snowflake::new(10),
             channel_id: Snowflake::new(1),
         });
@@ -717,7 +828,7 @@ mod tests {
     fn apply_channel_delete_removes_it() {
         let cache = Cache::new();
         cache.put_channel(channel(10, Some(1), 0));
-        cache.apply(&Event::ChannelDelete {
+        cache.apply(Event::ChannelDelete {
             id: Snowflake::new(10),
             guild_id: Snowflake::new(1),
         });
@@ -729,11 +840,11 @@ mod tests {
         let cache = Cache::new();
         cache.put_guild(guild(1));
         let before = cache.revision();
-        cache.apply(&Event::TypingStart {
+        cache.apply(Event::TypingStart {
             channel_id: Snowflake::new(1),
             user_id: Snowflake::new(2),
         });
-        cache.apply(&Event::Unknown {
+        cache.apply(Event::Unknown {
             name: "SOMETHING_NEW".to_owned(),
         });
         assert_eq!(cache.revision(), before, "no mutation should have occurred");
@@ -758,5 +869,160 @@ mod tests {
         assert!(a > start);
         cache.set_unread(Snowflake::new(1), Snowflake::new(2), true);
         assert!(cache.revision() > a);
+    }
+
+    #[test]
+    fn messages_are_capped_per_channel() {
+        // Without a cap this grows for the whole session: `MESSAGE_DELETE` is the only event that
+        // shrinks it, and messages that scroll out of view are never deleted, only never sent again.
+        let cache = Cache::new();
+        for i in 0..(MAX_MESSAGES_PER_CHANNEL * 3) {
+            cache.put_message(message(i as u64 + 1, 1));
+        }
+        let held = cache.channel_messages(Snowflake::new(1));
+        assert_eq!(held.len(), MAX_MESSAGES_PER_CHANNEL);
+        // The newest survive, the oldest are evicted.
+        assert_eq!(
+            held.last().expect("non-empty").id,
+            Snowflake::new(MAX_MESSAGES_PER_CHANNEL as u64 * 3)
+        );
+        assert_eq!(
+            held.first().expect("non-empty").id,
+            Snowflake::new(MAX_MESSAGES_PER_CHANNEL as u64 * 2 + 1)
+        );
+    }
+
+    #[test]
+    fn a_cap_in_one_channel_does_not_evict_another() {
+        let cache = Cache::new();
+        for i in 0..(MAX_MESSAGES_PER_CHANNEL + 10) {
+            cache.put_message(message(i as u64 + 1, 1));
+        }
+        cache.put_message(message(99_999, 2));
+        assert_eq!(cache.channel_messages(Snowflake::new(2)).len(), 1);
+        assert_eq!(
+            cache.channel_messages(Snowflake::new(1)).len(),
+            MAX_MESSAGES_PER_CHANNEL
+        );
+    }
+
+    #[test]
+    fn an_edited_message_does_not_consume_two_slots() {
+        // `MESSAGE_UPDATE` carries the same id as the message it replaces. Counting it twice would
+        // quietly evict a message that is still live, and the channel would lose history.
+        let cache = Cache::new();
+        cache.apply(Event::MessageCreate {
+            message: message(1, 1),
+        });
+        for _ in 0..MAX_MESSAGES_PER_CHANNEL {
+            cache.apply(Event::MessageUpdate {
+                message: message(1, 1),
+            });
+        }
+        assert_eq!(cache.channel_messages(Snowflake::new(1)).len(), 1);
+
+        // Fill the channel, then edit the oldest survivor repeatedly. The cap must not move.
+        for i in 0..MAX_MESSAGES_PER_CHANNEL as u64 {
+            cache.apply(Event::MessageCreate {
+                message: message(2 + i, 1),
+            });
+        }
+        let before = cache.channel_messages(Snowflake::new(1));
+        for _ in 0..50 {
+            cache.apply(Event::MessageUpdate {
+                message: message(2, 1),
+            });
+        }
+        let after = cache.channel_messages(Snowflake::new(1));
+        assert_eq!(after.len(), before.len());
+        assert_eq!(
+            after.iter().map(|m| m.id).collect::<Vec<_>>(),
+            before.iter().map(|m| m.id).collect::<Vec<_>>(),
+            "editing must not reorder or evict anything"
+        );
+    }
+
+    #[test]
+    fn leaving_a_guild_releases_its_messages() {
+        let cache = Cache::new();
+        cache.apply(Event::GuildCreate {
+            guild: guild(1),
+            channels: vec![channel(10, Some(1), 0)],
+            members: vec![member(1, 100)],
+        });
+        for i in 0..50 {
+            cache.put_message(message(i as u64 + 1, 10));
+        }
+        cache.apply(Event::GuildDelete {
+            guild_id: Snowflake::new(1),
+        });
+        assert_eq!(
+            cache.stats().messages,
+            0,
+            "messages must not outlive their guild"
+        );
+        assert_eq!(cache.channel_messages(Snowflake::new(10)), Vec::new());
+    }
+
+    #[test]
+    fn deleting_a_channel_releases_its_messages() {
+        let cache = Cache::new();
+        cache.put_channel(channel(10, Some(1), 0));
+        for i in 0..10 {
+            cache.put_message(message(i as u64 + 1, 10));
+        }
+        cache.apply(Event::ChannelDelete {
+            id: Snowflake::new(10),
+            guild_id: Snowflake::new(1),
+        });
+        assert_eq!(cache.stats().messages, 0);
+    }
+
+    #[test]
+    fn deleting_a_message_keeps_the_rest_of_its_channel_intact() {
+        let cache = Cache::new();
+        for i in 0..5 {
+            cache.put_message(message(i as u64 + 1, 1));
+        }
+        cache.remove_message(Snowflake::new(3));
+        let held = cache.channel_messages(Snowflake::new(1));
+        assert_eq!(held.len(), 4);
+        assert!(held.iter().all(|m| m.id != Snowflake::new(3)));
+        // A later eviction must not then remove a neighbour, which it would if the id were still
+        // queued for eviction.
+        for i in 0..MAX_MESSAGES_PER_CHANNEL {
+            cache.put_message(message(100 + i as u64, 1));
+        }
+        assert_eq!(
+            cache.channel_messages(Snowflake::new(1)).len(),
+            MAX_MESSAGES_PER_CHANNEL
+        );
+        assert!(cache.message(Snowflake::new(3)).is_none());
+    }
+
+    #[test]
+    fn guild_order_stays_deduplicated() {
+        let cache = Cache::new();
+        cache.put_guild(guild(1));
+        cache.put_guild(guild(2));
+        cache.put_guild(guild(1));
+        assert_eq!(
+            cache.guild_order(),
+            vec![Snowflake::new(1), Snowflake::new(2)]
+        );
+
+        cache.set_guild_order(vec![
+            Snowflake::new(2),
+            Snowflake::new(2),
+            Snowflake::new(1),
+        ]);
+        assert_eq!(
+            cache.guild_order(),
+            vec![Snowflake::new(2), Snowflake::new(1)]
+        );
+
+        // Guilds missing from the requested order are kept rather than dropped.
+        cache.set_guild_order(vec![Snowflake::new(2)]);
+        assert_eq!(cache.guild_order().len(), 2);
     }
 }

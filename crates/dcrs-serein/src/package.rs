@@ -93,6 +93,18 @@ pub struct Package {
     pub wasm: Vec<u8>,
 }
 
+/// A package plus its serialized form.
+///
+/// The two travel together because the byte budget can only be checked by serializing, and a theme
+/// with an embedded image is expensive to serialize.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Built {
+    /// The assembled package.
+    pub package: Package,
+    /// The exact bytes to write, already within [`MAX_PACKAGE_BYTES`].
+    pub json: String,
+}
+
 /// Identity supplied by the caller.
 ///
 /// Every field is non-optional because the host's manifest validation rejects an empty name,
@@ -328,7 +340,34 @@ impl Package {
     /// required field is missing or oversized, and [`PackageError::ImageTooLarge`] or
     /// [`PackageError::PackageTooLarge`] if an embedded image or the result blows a host limit.
     pub fn build(identity: Identity, conversion: &Conversion) -> Result<Self, PackageError> {
-        Self::build_with_image(identity, conversion, Vec::new())
+        Self::build_serialized(identity, conversion, Vec::new()).map(|built| built.package)
+    }
+
+    /// Assembles a package and serializes it once.
+    ///
+    /// The serialized bytes are returned alongside the package because the size check has to produce
+    /// them anyway, and the caller needs them to write the file. Computing the length and then
+    /// serializing a second time would build the whole document twice — and since a theme embeds its
+    /// background as a JSON array of bytes, pretty-printing a 2 MiB image is on the order of 15 MB of
+    /// `String` per pass.
+    ///
+    /// # Errors
+    /// As [`Package::build`], plus [`PackageError::ImageTooLarge`] when the image exceeds 2 MiB and
+    /// [`PackageError::PackageTooLarge`] when the serialized package exceeds 16 MiB.
+    pub fn build_serialized(
+        identity: Identity,
+        conversion: &Conversion,
+        background_image: Vec<u8>,
+    ) -> Result<Built, PackageError> {
+        let package = Self::assemble(identity, conversion, background_image)?;
+        let json = package.to_json()?;
+        if json.len() > MAX_PACKAGE_BYTES {
+            return Err(PackageError::PackageTooLarge {
+                size: json.len(),
+                limit: MAX_PACKAGE_BYTES,
+            });
+        }
+        Ok(Built { package, json })
     }
 
     /// Assembles a package carrying a conversation background.
@@ -337,8 +376,18 @@ impl Package {
     /// so a theme that wants an image has to carry it.
     ///
     /// # Errors
-    /// As [`Package::build`], plus [`PackageError::ImageTooLarge`] when the image exceeds 2 MiB.
+    /// As [`Package::build`], plus [`PackageError::ImageTooLarge`] when the image exceeds 2 MiB and
+    /// [`PackageError::PackageTooLarge`] when the serialized package exceeds 16 MiB.
     pub fn build_with_image(
+        identity: Identity,
+        conversion: &Conversion,
+        background_image: Vec<u8>,
+    ) -> Result<Self, PackageError> {
+        Self::build_serialized(identity, conversion, background_image).map(|built| built.package)
+    }
+
+    /// Validates identity and theme, then assembles. No serialization.
+    fn assemble(
         identity: Identity,
         conversion: &Conversion,
         background_image: Vec<u8>,
@@ -397,13 +446,6 @@ impl Package {
             wasm: Vec::new(),
         };
 
-        let json = package.to_json()?;
-        if json.len() > MAX_PACKAGE_BYTES {
-            return Err(PackageError::PackageTooLarge {
-                size: json.len(),
-                limit: MAX_PACKAGE_BYTES,
-            });
-        }
         Ok(package)
     }
 
@@ -424,34 +466,27 @@ impl Package {
 
 /// Resolves the CSS variables a theme declares under a given scope, for [`Conversion`] to consume.
 ///
-/// `root` is the shared `:root` block, `dark` and `light` the theme-specific ones. Later
-/// declarations win within a scope, matching CSS.
+/// `:root` applies to *both* appearances: it is the base Discord's own theme inherits from, and
+/// skipping it for one appearance would silently halve a light-only theme. A theme-specific block is
+/// layered on top, so a later declaration overrides the shared one, matching CSS.
 #[must_use]
 pub fn scope_vars(
     stylesheet: &dcrs_theme::Stylesheet,
     theme: dcrs_theme::ThemeKind,
 ) -> BTreeMap<String, String> {
     let mut out = BTreeMap::new();
-    // `:root` first, then the theme block, so a theme-specific declaration overrides the shared one.
-    // The root block applies to *both* appearances: it is the base Discord's own theme inherits
-    // from, and skipping it for one appearance would silently halve a light-only theme.
+
+    // One pass. `Rule::scopes` allocates, and the previous two-loop form walked every rule twice and
+    // allocated twice per rule — multiplied by the two appearances a conversion resolves.
     for rule in stylesheet.rules() {
-        if !rule.scopes().contains(&dcrs_theme::css::Scope::Root) {
-            continue;
-        }
-        for decl in &rule.declarations {
-            if !decl.property.starts_with("--") {
-                continue;
-            }
-            out.insert(decl.property.clone(), decl.value.clone());
-        }
-    }
-    for rule in stylesheet.rules() {
-        if !rule
-            .scopes()
-            .iter()
-            .any(|s| matches!(*s, dcrs_theme::css::Scope::Theme(k) if k == theme))
-        {
+        let scopes = rule.scopes();
+        // A rule carrying both `:root` and the theme class contributes to both; a rule carrying
+        // neither is not a theme block and is skipped entirely.
+        let applies = scopes.contains(&dcrs_theme::css::Scope::Root)
+            || scopes
+                .iter()
+                .any(|s| matches!(*s, dcrs_theme::css::Scope::Theme(k) if k == theme));
+        if !applies {
             continue;
         }
         for decl in &rule.declarations {

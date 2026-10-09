@@ -39,9 +39,10 @@ pub mod theme;
 
 pub use map::{Conversion, Dropped};
 pub use package::{
-    API_VERSION, Header, Identity, Kind, MAX_BACKGROUND_BYTES, MAX_IMAGE_ALLOC, MAX_IMAGE_EDGE,
-    MAX_IMAGE_PIXELS, MAX_PACKAGE_BYTES, Manifest, Package, PackageBuild, PackageError, convert,
-    from_theme, from_theme_with_image, header_metadata, safe_id, valid_id, valid_source,
+    API_VERSION, Built, Header, Identity, Kind, MAX_BACKGROUND_BYTES, MAX_IMAGE_ALLOC,
+    MAX_IMAGE_EDGE, MAX_IMAGE_PIXELS, MAX_PACKAGE_BYTES, Manifest, Package, PackageBuild,
+    PackageError, convert, from_theme, from_theme_with_image, header_metadata, safe_id, valid_id,
+    valid_source,
 };
 pub use theme::{
     Appearance, Background, Colors, Fit, METRICS, MetricRange, SectionOpacity, Style, Target,

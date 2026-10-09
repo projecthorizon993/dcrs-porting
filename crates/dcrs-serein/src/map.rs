@@ -6,18 +6,34 @@ use dcrs_theme::{ColorError, Rgba, color};
 
 use crate::theme::{Colors, MetricRange, Style, Theme, Token};
 
+/// How a token is derived from the theme's palette when no variable resolves to it.
+#[derive(Debug, Clone, Copy)]
+struct SurfaceFallback {
+    /// The variable to derive from.
+    base: &'static str,
+    /// The variable the theme would have set directly, if it had.
+    ///
+    /// Only used to avoid overriding a value that is already readable and distinct.
+    target: &'static str,
+    /// How far to step from `base`, as a multiplier.
+    ///
+    /// Distinct per surface on purpose. Deriving every one of them by the same step produces the
+    /// same colour for all of them, which is the flat result this exists to prevent.
+    step: f32,
+}
+
 /// Discord custom property candidates for one Serein colour token.
 struct TokenSources {
     /// The token being filled.
     token: Token,
     /// `--variable` names, tried in order.
     variables: &'static [&'static str],
-    /// Whether to synthesize the token from a fallback pair when no variable resolves.
+    /// Whether to synthesize the token from the palette when no variable resolves.
     ///
     /// `base`, `sidebar` and `chat` are the three surfaces a theme always paints, and Discord
-    /// distinguishes four or five near-identical variables for each. Without this a monochrome
-    /// theme would land with only half its surfaces set.
-    fallback: Option<(&'static str, &'static str)>,
+    /// distinguishes four or five near-identical variables for each. Without this a monochrome theme
+    /// would land with only half its surfaces set.
+    fallback: Option<SurfaceFallback>,
 }
 
 /// The colour mapping table.
@@ -41,16 +57,24 @@ const COLOR_SOURCES: &[TokenSources] = &[
             "--background-secondary-alt",
             "--sidebar",
         ],
-        fallback: Some(("--background-primary", "--background-secondary")),
+        fallback: Some(SurfaceFallback {
+            base: "--background-primary",
+            target: "--background-secondary",
+            step: 0.06,
+        }),
     },
     TokenSources {
         token: Token::Chat,
-        variables: &[
-            "--chat-background",
-            "--bg-base-secondary",
-            "--background-primary",
-        ],
-        fallback: Some(("--background-primary", "--background-secondary")),
+        // `--background-primary` is deliberately absent. Discord paints it behind the whole window,
+        // so a theme that sets it and nothing else would land chat and base on the identical colour —
+        // the flat, unreadable result the fallback exists to prevent. Deriving chat from base keeps
+        // them distinguishable.
+        variables: &["--chat-background", "--bg-base-secondary"],
+        fallback: Some(SurfaceFallback {
+            base: "--background-primary",
+            target: "--chat-background",
+            step: 0.12,
+        }),
     },
     TokenSources {
         token: Token::Raised,
@@ -70,7 +94,11 @@ const COLOR_SOURCES: &[TokenSources] = &[
         ],
         // A theme that never mentions hover still has one: Discord's default is a translucent
         // white, and leaving the token unset means the host's built-in shows instead.
-        fallback: Some(("--background-primary", "--background-secondary")),
+        fallback: Some(SurfaceFallback {
+            base: "--background-primary",
+            target: "--background-modifier-hover",
+            step: 0.18,
+        }),
     },
     TokenSources {
         token: Token::Selected,
@@ -318,27 +346,30 @@ fn project_colors(
 
     for source in COLOR_SOURCES {
         let resolved = resolve_color(vars, source.variables);
-        if let Resolved::Found(hex) = &resolved {
-            colors.set(source.token, hex.clone());
+        if let Resolved::Found(hex) = resolved {
+            colors.set(source.token, hex);
             continue;
         }
 
-        // Nothing readable directly. A surface can still be derived from the theme's own palette, which
-        // is what keeps a monochrome theme from producing one flat colour where the host expects
-        // several distinct ones.
-        let derived = source.fallback.and_then(|pair| derive_surface(vars, pair));
-        if let Some(hex) = derived {
+        // Nothing readable directly. A surface can still be derived from the theme's own palette,
+        // which is what keeps a monochrome theme from producing one flat colour where the host expects
+        // several distinct ones. This applies whether the candidate was absent or unreadable: a theme
+        // that never mentions a sidebar still has one.
+        if let Some(hex) = source
+            .fallback
+            .and_then(|fallback| derive_surface(vars, fallback))
+        {
             colors.set(source.token, hex);
             continue;
         }
 
         // Only a variable the theme actually declared is worth reporting. A token with no candidate
         // present is not a loss; it means the host's own default applies.
-        if let Resolved::Unresolved(missing) = resolved {
+        if let Resolved::Unresolved { name, error } = resolved {
             conversion.dropped.push(Dropped {
                 target: format!("{label}.colors.{}", source.token.as_str()),
-                variable: missing.to_owned(),
-                reason: describe_color_error(&color::evaluate(&vars[missing]).unwrap_err()),
+                variable: name.to_owned(),
+                reason: describe_color_error(&error),
             });
         }
     }
@@ -350,15 +381,23 @@ fn project_colors(
 enum Resolved {
     /// A candidate resolved and evaluated.
     Found(String),
-    /// Candidates were declared but none evaluated; carries the first name seen, which is the one
-    /// worth reporting because it is the variable the theme author actually wrote.
-    Unresolved(&'static str),
+    /// Candidates were declared but none evaluated.
+    ///
+    /// Carries the first name seen, because that is the variable the author actually wrote, and the
+    /// error from the last one tried, because that is what the report needs to explain the failure.
+    Unresolved {
+        /// The first declared candidate name.
+        name: &'static str,
+        /// Why the last attempt failed.
+        error: ColorError,
+    },
     /// No candidate was declared at all, so nothing is dropped.
     Absent,
 }
 
 fn resolve_color(vars: &BTreeMap<String, String>, candidates: &'static [&'static str]) -> Resolved {
     let mut declared = None;
+    let mut last_error = None;
     for name in candidates {
         let Some(value) = vars.get(*name) else {
             continue;
@@ -366,40 +405,51 @@ fn resolve_color(vars: &BTreeMap<String, String>, candidates: &'static [&'static
         if declared.is_none() {
             declared = Some(*name);
         }
-        if let Ok(c) = color::evaluate(value) {
-            return Resolved::Found(c.to_hex());
+        match color::evaluate(value) {
+            Ok(c) => return Resolved::Found(c.to_hex()),
+            Err(e) => last_error = Some(e),
         }
     }
-    match declared {
-        Some(name) => Resolved::Unresolved(name),
-        None => Resolved::Absent,
+    match (declared, last_error) {
+        (Some(name), Some(error)) => Resolved::Unresolved { name, error },
+        (Some(name), None) => Resolved::Unresolved {
+            name,
+            error: ColorError::Unsupported("colour".to_owned()),
+        },
+        (None, _) => Resolved::Absent,
     }
 }
 
-/// Derives a token from the theme's own palette, one lightness step off `base_var`.
+/// Derives a surface from the theme's own palette, stepping away from `base`.
 ///
-/// Discord's own light and dark defaults differ from the base by a small step, so a surface one step
-/// off `base_var` reads correctly against it. That is what a theme author does by hand, and it is what
-/// keeps a theme from producing one flat surface where Serein expects several distinct ones.
+/// Discord's own light and dark defaults differ from the base by a small step, so a surface a step off
+/// the base reads correctly against it. That is what a theme author does by hand, and it is what keeps
+/// a theme from producing one flat surface where Serein expects several distinct ones.
 ///
 /// Scaling rather than adding an offset preserves hue, which matters more than the exact step: a
-/// themed sidebar that shifts hue stops reading as part of the same palette.
+/// themed sidebar that shifts hue stops reading as part of the same palette. The step is per-surface so
+/// that deriving several of them yields several distinct colours rather than the same one twice.
 ///
-/// `target_var` is used only to confirm the theme intended a distinct surface: when it declared the
+/// `target` is consulted only to confirm the theme intended a distinct surface: when it declared the
 /// target itself and that value resolved, there is nothing to derive.
-fn derive_surface(
-    vars: &BTreeMap<String, String>,
-    (base_var, target_var): (&'static str, &'static str),
-) -> Option<String> {
-    let base = color::evaluate(vars.get(base_var)?).ok()?;
-    // Already readable and distinct: use what the author wrote rather than a guess.
-    if let Some(target) = vars.get(target_var).and_then(|v| color::evaluate(v).ok()) {
-        if target.to_hex() != base.to_hex() {
+fn derive_surface(vars: &BTreeMap<String, String>, fallback: SurfaceFallback) -> Option<String> {
+    let base = color::evaluate(vars.get(fallback.base)?).ok()?;
+    // Already readable and distinct: use what the author wrote rather than a guess. Compared as colours
+    // rather than as hex strings, so this costs no allocation.
+    if let Some(target) = vars
+        .get(fallback.target)
+        .and_then(|v| color::evaluate(v).ok())
+    {
+        if target != base {
             return Some(target.to_hex());
         }
     }
 
-    let up = if base.luminance() < 0.5 { 1.06 } else { 0.94 };
+    let up = if base.luminance() < 0.5 {
+        1.0 + fallback.step
+    } else {
+        1.0 - fallback.step
+    };
     let scale = |c: u8| (f32::from(c) * up).clamp(0.0, 255.0).round() as u8;
     Some(Rgba::rgb(scale(base.r), scale(base.g), scale(base.b)).to_hex())
 }
@@ -413,7 +463,13 @@ fn project_style(
     let mut style = Style::default();
 
     for source in METRIC_SOURCES {
-        let merged = |name: &str| dark.get(name).or_else(|| root.get(name)).cloned();
+        // Borrowed rather than cloned: each metric probes two or three candidate variables, and the
+        // value was being copied out of the map for every probe including the ones that missed.
+        let merged = |name: &str| {
+            dark.get(name)
+                .or_else(|| root.get(name))
+                .map(String::as_str)
+        };
         let Some((name, raw)) = source
             .variables
             .iter()
@@ -426,7 +482,7 @@ fn project_style(
             continue;
         };
 
-        match numeric_value(&raw, source.length) {
+        match numeric_value(raw, source.length) {
             Some(value) if in_range(value, range) => apply_metric(&mut style, source.metric, value),
             Some(value) => conversion.dropped.push(Dropped {
                 target: format!("style.{}", source.metric),

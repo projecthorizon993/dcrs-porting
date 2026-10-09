@@ -449,6 +449,32 @@ pub struct VarRef {
 #[must_use]
 pub fn extract_var_refs(value: &str) -> Vec<VarRef> {
     let mut out = Vec::new();
+    for_each_var_ref(value, |name, fallback| {
+        out.push(VarRef {
+            name: name.to_owned(),
+            fallback,
+        })
+    });
+    out
+}
+
+/// Whether a value contains two or more `var()` references.
+///
+/// Counting rather than collecting: the theme analyzer asks this of every declaration in a theme, and
+/// materializing a `Vec` of owned names and fallbacks to compare its length against two was allocating
+/// once per declaration for a question with a boolean answer.
+#[must_use]
+pub fn count_var_refs(value: &str) -> usize {
+    let mut count = 0usize;
+    for_each_var_ref(value, |_, _| count += 1);
+    count
+}
+
+/// Walks each `var()` reference in a value, handing the callback the name and any fallback.
+///
+/// The shared scanner behind [`extract_var_refs`] and [`count_var_refs`], so the two can never drift
+/// on what counts as a reference.
+fn for_each_var_ref(value: &str, mut visit: impl FnMut(&str, Option<String>)) {
     let bytes = value.as_bytes();
     let mut i = 0usize;
     while i + 4 <= bytes.len() {
@@ -475,17 +501,13 @@ pub fn extract_var_refs(value: &str) -> Vec<VarRef> {
                 None => (inner.trim(), None),
             };
             if name.starts_with("--") {
-                out.push(VarRef {
-                    name: name.to_owned(),
-                    fallback: fallback.filter(|f| !f.is_empty()),
-                });
+                visit(name, fallback.filter(|f| !f.is_empty()));
             }
             i = j + 1;
         } else {
             i += 1;
         }
     }
-    out
 }
 
 /// Rewrites every hashed class name in a selector to its stable equivalent.
@@ -571,11 +593,18 @@ impl Variables {
         let mut candidates: Candidates = BTreeMap::new();
 
         for rule in stylesheet.rules() {
+            // Computed once per rule rather than once per declaration: `scopes()` allocates a `Vec`,
+            // and a single `:root` block carrying 400 declarations was allocating 400 identical
+            // one-element vectors to answer a question that never changes within a rule.
+            let scopes = rule.scopes();
+            if scopes.is_empty() {
+                continue;
+            }
             for decl in &rule.declarations {
                 if !decl.property.starts_with("--") {
                     continue;
                 }
-                for scope in rule.scopes() {
+                for &scope in &scopes {
                     let applies = match scope {
                         Scope::Root => true,
                         Scope::Theme(kind) => theme == Some(kind),
@@ -591,6 +620,16 @@ impl Variables {
             }
         }
 
+        // Group by name once, so every `var()` reference is a lookup rather than a scan over every
+        // declared variable. Built from borrowed keys, so this costs no string copies.
+        let mut index: CandidateIndex<'_> = BTreeMap::new();
+        for ((scope, name), list) in &candidates {
+            index
+                .entry(name.as_str())
+                .or_default()
+                .push((*scope, list.as_slice()));
+        }
+
         let mut resolved = BTreeMap::new();
         let mut unresolved: Vec<String> = Vec::new();
         for ((scope, name), list) in &candidates {
@@ -601,8 +640,8 @@ impl Variables {
             else {
                 continue;
             };
-            let (order, raw) = (*order, raw.clone());
-            let value = expand(name, &raw, &candidates, &mut unresolved, &mut Vec::new())?;
+            let order = *order;
+            let value = expand(name.as_str(), raw, &index, &mut unresolved, &mut Vec::new())?;
             resolved.insert(
                 name.clone(),
                 ResolvedVar {
@@ -615,12 +654,13 @@ impl Variables {
 
         // Variables referenced but never declared anywhere in the stylesheet. Themes routinely rely
         // on host-injected variables, so these are reported rather than treated as errors.
-        let declared: std::collections::BTreeSet<String> = resolved.keys().cloned().collect();
+        let declared: std::collections::BTreeSet<&str> =
+            candidates.keys().map(|(_, name)| name.as_str()).collect();
         for list in candidates.values() {
             for (_, _, raw) in list {
                 for var_ref in extract_var_refs(raw) {
-                    if !declared.contains(&var_ref.name) {
-                        unresolved.push(var_ref.name.clone());
+                    if !declared.contains(var_ref.name.as_str()) {
+                        unresolved.push(var_ref.name);
                     }
                 }
             }
@@ -684,17 +724,19 @@ impl Variables {
 /// A reference to an undeclared variable with no fallback is left in place verbatim and recorded
 /// in `unresolved`, rather than failing: real themes depend on variables the host injects, and a
 /// single such reference must not discard the rest of the theme.
-fn expand(
-    name: &str,
+fn expand<'a>(
+    name: &'a str,
     value: &str,
-    candidates: &Candidates,
+    candidates: &'a CandidateIndex<'a>,
     unresolved: &mut Vec<String>,
-    stack: &mut Vec<String>,
+    stack: &mut Vec<&'a str>,
 ) -> Result<String, ResolveError> {
-    if stack.contains(&name.to_owned()) {
+    // The stack holds borrowed names, so a `var()` chain allocates nothing per hop and the cycle check
+    // compares without materializing a `String` on every frame.
+    if stack.contains(&name) {
         return Err(ResolveError::Cycle(name.to_owned()));
     }
-    stack.push(name.to_owned());
+    stack.push(name);
 
     let mut out = String::with_capacity(value.len());
     let bytes = value.as_bytes();
@@ -727,8 +769,8 @@ fn expand(
             };
 
             match lookup(candidates, var_name) {
-                Some(raw) => {
-                    let expanded = expand(var_name, &raw, candidates, unresolved, stack)?;
+                Some((declared_name, raw)) => {
+                    let expanded = expand(declared_name, raw, candidates, unresolved, stack)?;
                     out.push_str(&expanded);
                 }
                 None => {
@@ -754,27 +796,38 @@ fn expand(
 
 /// Finds the winning declaration for a variable across all scopes.
 ///
-/// Candidates are stored as `(order, important, raw)`.
-fn lookup(candidates: &Candidates, name: &str) -> Option<String> {
-    let mut best: Option<(bool, usize, String)> = None;
-    for ((_scope, key), list) in candidates {
-        if key != name {
-            continue;
-        }
+/// Candidates are stored as `(order, important, raw)`, keyed by `(scope, name)`.
+///
+/// Returns the declared name alongside the value. The name matters because it is what a `var()`
+/// chain pushes onto the cycle-detection stack, and only the index's own key borrows for as long as
+/// the resolution does.
+///
+/// The scan is over the *index* rather than the whole candidate map, which is what keeps resolution
+/// from being quadratic in the number of variables: a large theme declares several hundred and
+/// references them several hundred times, and scanning every entry per reference made that tens of
+/// thousands of string comparisons per resolution, twice per conversion.
+fn lookup<'i>(candidates: &'i CandidateIndex<'_>, name: &str) -> Option<(&'i str, &'i str)> {
+    let (declared, scopes) = candidates.get_key_value(name)?;
+    let mut best: Option<(bool, usize, &'i str)> = None;
+    for (_, list) in scopes {
         let Some(&(order, important, ref raw)) = list
             .iter()
             .max_by_key(|&(order, important, _)| (important, order))
         else {
             continue;
         };
-        let candidate = (important, order, raw.clone());
         best = match best {
-            Some(prev) if (prev.0, prev.1) >= (candidate.0, candidate.1) => Some(prev),
-            _ => Some(candidate),
+            Some(previous) if (previous.0, previous.1) >= (important, order) => Some(previous),
+            _ => Some((important, order, raw)),
         };
     }
-    best.map(|(_, _, raw)| raw)
+    best.map(|(_, _, raw)| (*declared, raw))
 }
+
+/// Candidates grouped by variable name, so a reference resolves by lookup rather than by scan.
+///
+/// Built once per [`Variables::resolve`]. The borrowed keys keep it allocation-free.
+type CandidateIndex<'a> = BTreeMap<&'a str, Vec<(Scope, &'a [(usize, bool, String)])>>;
 
 #[cfg(test)]
 mod tests {

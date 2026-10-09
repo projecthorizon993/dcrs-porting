@@ -264,11 +264,16 @@ fn mask_literals(source: &str) -> String {
         let b = bytes[i];
         let blank = |masked: &mut Vec<u8>, from: usize, to: usize| {
             // Newlines survive so line numbering still works.
-            for (idx, slot) in masked.iter_mut().enumerate().take(to).skip(from) {
+            // Sliced rather than `enumerate().take(to).skip(from)`: `skip` on a forward iterator still
+            // walks the prefix, so masking one literal near the end of a large source re-scanned
+            // everything before it. With a few hundred literals that is the difference between a
+            // linear pass and tens of millions of byte visits.
+            let len = masked.len();
+            let slice = &mut masked[from.min(len)..to.min(len)];
+            for slot in slice {
                 if *slot != b'\n' {
                     *slot = b' ';
                 }
-                let _ = idx;
             }
         };
 

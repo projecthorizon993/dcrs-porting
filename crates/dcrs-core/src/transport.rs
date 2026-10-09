@@ -208,23 +208,28 @@ impl GatewayTransport for WsTransport {
             let message = socket
                 .read()
                 .map_err(|e| TransportError::Disconnected(e.to_string()))?;
-            let payload: Vec<u8> = match message {
-                tungstenite::Message::Text(t) => t.as_bytes().to_vec(),
-                tungstenite::Message::Binary(b) => b.to_vec(),
+
+            // Whether the server compresses is negotiated at the protocol level, so accept either a
+            // plain JSON payload or a zlib-stream one.
+            //
+            // Text frames are parsed straight out of the buffer tungstenite already holds: copying
+            // every inbound frame into a fresh `Vec` first doubled the peak allocation on the hottest
+            // path in the process, for a buffer that is read once and then dropped anyway.
+            let bytes: &[u8] = match &message {
+                tungstenite::Message::Text(t) => t.as_bytes(),
+                tungstenite::Message::Binary(b) => b,
                 tungstenite::Message::Close(frame) => {
-                    let code = frame.map_or(1000u16, |f| u16::from(f.code));
+                    let code = frame.as_ref().map_or(1000u16, |f| u16::from(f.code));
                     return Err(TransportError::Disconnected(format!("closed {code}")));
                 }
                 // Ping/pong are answered by tungstenite; nothing to decode.
                 _ => continue,
             };
 
-            // Whether the server compresses is negotiated at the protocol level, so accept either a
-            // plain JSON payload or a zlib-stream one.
-            let json = if let Ok(v) = serde_json::from_slice::<serde_json::Value>(&payload) {
-                v
+            let json = if let Ok(value) = serde_json::from_slice::<serde_json::Value>(bytes) {
+                value
             } else {
-                let inflated = self.zlib.decode(&payload)?;
+                let inflated = self.zlib.decode(bytes)?;
                 serde_json::from_slice(&inflated)
                     .map_err(|e| TransportError::Decode(e.to_string()))?
             };
