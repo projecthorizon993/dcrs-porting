@@ -23,13 +23,13 @@ jobs:
         include:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
-            archive: tar.gz
+            asset: linux-x86_64
           - os: windows-latest
             target: x86_64-pc-windows-msvc
-            archive: zip
+            asset: windows-x86_64
           - os: macos-latest
             target: aarch64-apple-darwin
-            archive: tar.gz
+            asset: macos-aarch64
 
     steps:
       - uses: actions/checkout@v4
@@ -108,41 +108,22 @@ jobs:
           # A hashed selector must translate, which proves the class map is embedded too.
           "$bin" theme examples/example-theme.css | grep -q 'hashed'
 
-      # Split by shell rather than branching inside bash: Git Bash on the Windows runner has no `zip`,
-      # and PowerShell's Compress-Archive produces a zip Windows users can actually open without
-      # installing anything.
-      - name: Stage the artifact
+      # Bare executables, not archives. An archive here only adds a step between someone deciding to
+      # try the tool and running it, and on Windows a loose `.exe` in Downloads is easier to run than
+      # one buried in a zip. The README travels as its own asset instead of riding inside.
+      #
+      # The name carries the target rather than relying on the extension alone: `dcrs-port` with no
+      # extension is ambiguous once three of them sit in one folder.
+      - name: Name the executable
         shell: bash
         run: |
           set -euo pipefail
-          version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
-          staging="dcrs-port-$version-${{ matrix.target }}"
-          mkdir -p "$staging"
           ext=""
           if [ "${{ runner.os }}" = "Windows" ]; then ext=".exe"; fi
-          cp "target/${{ matrix.target }}/release/dcrs-port$ext" "$staging/"
-          cp README.md "$staging/"
-          # Cargo.toml declares MIT but no LICENSE file is committed, so this is best-effort rather
-          # than a step that fails a release over a missing file.
-          if [ -f LICENSE ]; then cp LICENSE "$staging/"; fi
-          echo "STAGING=$staging" >> "$GITHUB_ENV"
-
-      - name: Archive (unix)
-        if: matrix.archive == 'tar.gz'
-        shell: bash
-        run: |
-          set -euo pipefail
-          tar -czf "$STAGING.tar.gz" "$STAGING"
-          echo "ASSET=$STAGING.tar.gz" >> "$GITHUB_ENV"
-
-      - name: Archive (windows)
-        if: matrix.archive == 'zip'
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $asset = "$env:STAGING.zip"
-          Compress-Archive -Path "$env:STAGING/*" -DestinationPath $asset
-          "ASSET=$asset" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          name="dcrs-port-${{ matrix.asset }}$ext"
+          cp "target/${{ matrix.target }}/release/dcrs-port$ext" "$name"
+          echo "ASSET=$name" >> "$GITHUB_ENV"
+          "$name" --version
 
       - uses: actions/upload-artifact@v4
         with:
@@ -162,30 +143,50 @@ jobs:
           path: artifacts
           merge-multiple: true
 
+      # Shipped as its own asset rather than tucked inside each download, which the bare executables
+      # cannot carry.
+      - name: Add the README
+        run: cp README.md artifacts/README.md
+
       - name: List artifacts
         run: ls -l artifacts
 
       - name: Write release notes
         run: |
           cat > notes.md <<'NOTES'
-          ## dcrs-port
+## dcrs-port
 
-          The porting tool. It analyzes Discord themes and mods, reports how portable they are to a
-          native client, and converts a BetterDiscord or Vencord theme into a native Serein
-          `.serein-extension` package.
+The porting tool. It analyzes Discord themes and mods, reports how portable they are to a
+native client, and converts a BetterDiscord or Vencord theme into a native Serein
+`.serein-extension` package.
 
-          ### Trying it
+### Downloading
 
-          ```sh
-          dcrs-port plugin    my-mod.ts          # what APIs it uses, and which are replicable
-          dcrs-port effects   my-mod.ts          # what it does, independent of how
-          dcrs-port media     my-mod.ts          # what it does with media, and whether that ports
-          dcrs-port theme     my-theme.css       # what the CSS is made of
-          dcrs-port convert   my-theme.css       # writes a .serein-extension package
-          dcrs-port coverage                      # what the capability registry knows
-          ```
+Bare executables, no installer and no archive:
 
-          Add `--json` to any command for machine-readable output. `effects` and `media` exit non-zero
+| File | Platform |
+| --- | --- |
+| `dcrs-port-windows-x86_64.exe` | Windows 64-bit |
+| `dcrs-port-linux-x86_64` | Linux 64-bit |
+| `dcrs-port-macos-aarch64` | macOS Apple Silicon |
+
+On Linux and macOS, mark it executable first: `chmod +x dcrs-port-linux-x86_64`.
+
+The capability registry and class map are compiled in, so there are no data files to fetch
+alongside it.
+
+### Trying it
+
+```sh
+dcrs-port plugin    my-mod.ts          # what APIs it uses, and which are replicable
+dcrs-port effects   my-mod.ts          # what it does, independent of how
+dcrs-port media     my-mod.ts          # what it does with media, and whether that ports
+dcrs-port theme     my-theme.css       # what the CSS is made of
+dcrs-port convert   my-theme.css       # writes a .serein-extension package
+dcrs-port coverage                      # what the capability registry knows
+```
+
+Add `--json` to any command for machine-readable output. `effects` and `media` exit non-zero
           when a plugin does something that does not port, so they can gate a pipeline rather than
           only inform one.
 
