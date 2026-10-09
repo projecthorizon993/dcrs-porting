@@ -1,0 +1,13 @@
+/target
+**/*.rs.bk
+Cargo.lock.bak
+
+# Local scratch
+/legcord-ref
+*.local
+
+# Editor
+.idea/
+.vscode/
+*.swp
+.DS_Store

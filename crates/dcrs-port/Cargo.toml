@@ -1,0 +1,23 @@
+[package]
+name = "dcrs-port"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Analyzes Discord themes and mods and reports how portable they are to a native client"
+
+[[bin]]
+name = "dcrs-port"
+path = "src/main.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+dcrs-theme.workspace = true
+dcrs-compat.workspace = true
+anyhow.workspace = true
+clap.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true

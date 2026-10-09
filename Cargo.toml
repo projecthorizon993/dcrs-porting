@@ -1,0 +1,48 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/dcrs-theme",
+    "crates/dcrs-compat",
+    "crates/dcrs-plugins",
+    "crates/dcrs-port",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "MIT"
+description = "Tooling to port Discord client mods and themes to a native Rust client"
+
+[workspace.dependencies]
+dcrs-theme = { path = "crates/dcrs-theme", version = "0.1.0" }
+dcrs-compat = { path = "crates/dcrs-compat", version = "0.1.0" }
+dcrs-plugins = { path = "crates/dcrs-plugins", version = "0.1.0" }
+
+cssparser = "0.31"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.9"
+thiserror = "2"
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+missing_debug_implementations = "warn"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+module_name_repetitions = "allow"
+must_use_candidate = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+cast_possible_truncation = "allow"
+cast_precision_loss = "allow"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = true

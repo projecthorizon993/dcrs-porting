@@ -1,0 +1,42 @@
+/*
+ * @name Example Theme • @author dcrs • @version 1.0
+ * A small theme exercising every tier the porting engine handles.
+ */
+
+:root {
+    --background-primary: #1e1f22;
+    --background-secondary: #2b2d31;
+    --background-tertiary: #313338;
+    --text-normal: #dbdee1;
+    --text-muted: #949ba4;
+    --brand-experiment: #5865f2;
+    --brand-experiment-hsl: 235 86% 66%;
+    --accent: var(--brand-experiment);
+    --accent-soft: hsl(var(--brand-experiment-hsl) / 0.24);
+    --radius-md: 8px;
+    --spacing-8: 8px;
+}
+
+/* Tier 5: structural selectors, which the shadow tree supports. */
+.chatContent-31rq:has(.message-2n:hover) {
+    --background-message-hover: #35373c;
+}
+
+.message-2n:nth-child(2) {
+    --background-modifier-selected: #404249;
+}
+
+/* Tier 3: legacy prefix matching. Emitting `channel-` natively makes this work unchanged. */
+[class*="channel-"] {
+    --channel-text: #b5bac1;
+}
+
+/* Tier 4: fully hashed names, which need a class-map entry. */
+.chatContent-31rq {
+    --chat-background: #1e1f22;
+}
+
+/* Out of scope: geometry changes need a native box model, not a value engine. */
+.theme-dark .sidebar-2f1c9d {
+    width: 240px;
+}

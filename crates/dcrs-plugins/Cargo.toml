@@ -1,0 +1,16 @@
+[package]
+name = "dcrs-plugins"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Native plugin ABI for ported Discord mods"
+
+[lints]
+workspace = true
+
+[dependencies]
+dcrs-compat.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true

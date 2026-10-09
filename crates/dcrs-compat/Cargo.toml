@@ -1,0 +1,16 @@
+[package]
+name = "dcrs-compat"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Capability registry describing which third-party mod APIs a native Discord client can replicate"
+
+[lints]
+workspace = true
+
+[dependencies]
+dcrs-theme.workspace = true
+serde.workspace = true
+toml.workspace = true
+thiserror.workspace = true

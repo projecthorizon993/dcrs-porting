@@ -1,0 +1,433 @@
+# Capability registry
+#
+# Which third-party mod APIs a native Discord client can replicate.
+#
+# Surface ids follow `dcrs-compat::registry`. Classes:
+#   read | write | subscription | ui  -> replicable
+#   internals                                -> NOT replicable (depends on the minified bundle)
+#
+# `support` is one of: stub | partial | implemented | unsupported.
+# `unsupported` is only legal on `internals` surfaces; the loader rejects it elsewhere.
+#
+# Counts follow the source survey in docs/porting.md: 71 Flux stores and ~400 getters in
+# Vencord.Webpack.Common, ~4000 legal Flux action names of which mods dispatch ~25, and 17
+# BdApi members. Only the surfaces mods demonstrably touch are enumerated here; the registry is
+# expected to grow as more plugins are analyzed.
+
+version = 1
+
+# ---------------------------------------------------------------------------
+# (a) data read
+# ---------------------------------------------------------------------------
+
+[[surfaces]]
+id = "stores.ChannelStore"
+class = "read"
+support = "stub"
+webapp_analogue = "Vencord.Webpack.Common.ChannelStore"
+notes = "getChannel, getBasicChannel, getChannelIds, getDMFromUserId, getAllThreadsForGuild"
+
+[[surfaces]]
+id = "stores.GuildStore"
+class = "read"
+support = "stub"
+webapp_analogue = "Vencord.Webpack.Common.GuildStore"
+notes = "getGuild, getGuildsArray, getGuildIds, getGuildCount"
+
+[[surfaces]]
+id = "stores.UserStore"
+class = "read"
+support = "stub"
+webapp_analogue = "Vencord.Webpack.Common.UserStore"
+notes = "getCurrentUser, getUser, findByTag, filter, takeSnapshot"
+
+[[surfaces]]
+id = "stores.GuildMemberStore"
+class = "read"
+support = "stub"
+webapp_analogue = "Vencord.Webpack.Common.GuildMemberStore"
+notes = "getMember, getMemberIdsByGuild, getMemberCount"
+
+[[surfaces]]
+id = "stores.MessageStore"
+class = "read"
+support = "stub"
+webapp_analogue = "Vencord.Webpack.Common.MessageStore"
+notes = "getMessage, getLastMessageId, getMessageCount"
+
+[[surfaces]]
+id = "stores.SelectedChannelStore"
+class = "read"
+support = "stub"
+webapp_analogue = "Vencord.Webpack.Common.SelectedChannelStore"
+notes = "getChannelId, getGuildId, getVoiceChannelId"
+
+[[surfaces]]
+id = "stores.SelectedGuildStore"
+class = "read"
+support = "stub"
+webapp_analogue = "Vencord.Webpack.Common.SelectedGuildStore"
+
+[[surfaces]]
+id = "stores.MediaEngineStore"
+class = "read"
+support = "stub"
+webapp_analogue = "Vencord.Webpack.Common.MediaEngineStore"
+notes = "engine.connections, audioInputDeviceId, videoInputDeviceId, hasFeature"
+
+[[surfaces]]
+id = "stores.PermissionStore"
+class = "read"
+support = "stub"
+webapp_analogue = "Vencord.Webpack.Common.PermissionStore"
+notes = "can(guildId, userId, permission), canGeneral"
+
+[[surfaces]]
+id = "stores.RelationshipStore"
+class = "read"
+support = "stub"
+webapp_analogue = "Vencord.Webpack.Common.RelationshipStore"
+
+[[surfaces]]
+id = "stores.ReadStateStore"
+class = "read"
+support = "stub"
+webapp_analogue = "Vencord.Webpack.Common.ReadStateStore"
+notes = "isUnread(guildId, channelId), getLastReadMessageId"
+
+[[surfaces]]
+id = "stores.VoiceStateStore"
+class = "read"
+support = "stub"
+webapp_analogue = "Vencord.Webpack.Common.VoiceStateStore"
+
+[[surfaces]]
+id = "stores.GuildRoleStore"
+class = "read"
+support = "stub"
+webapp_analogue = "Vencord.Webpack.Common.GuildRoleStore"
+notes = "getRole, getRoles(guildId), getGuildRoles"
+
+[[surfaces]]
+id = "stores.PresenceStore"
+class = "read"
+support = "stub"
+webapp_analogue = "Vencord.Webpack.Common.PresenceStore"
+notes = "getStatus(userId), getPresence"
+
+[[surfaces]]
+id = "stores.DraftStore"
+class = "read"
+support = "stub"
+webapp_analogue = "Vencord.Webpack.Common.DraftStore"
+
+[[surfaces]]
+id = "stores.EmojiStore"
+class = "read"
+support = "stub"
+webapp_analogue = "Vencord.Webpack.Common.EmojiStore"
+
+[[surfaces]]
+id = "stores.UserSettingsProtoStore"
+class = "read"
+support = "stub"
+webapp_analogue = "Vencord.Webpack.Common.UserSettingsProtoStore"
+notes = "reads Discord's own appearance.theme; used by clientTheme and noMosaic"
+
+[[surfaces]]
+id = "dataStore.get"
+class = "read"
+support = "stub"
+webapp_analogue = "Vencord.Api.DataStore.get / BdApi.Data.load"
+notes = "idb-keyval over IndexedDB upstream; no change notification in either"
+
+[[surfaces]]
+id = "dataStore.keys"
+class = "read"
+support = "stub"
+webapp_analogue = "Vencord.Api.DataStore.keys"
+
+# ---------------------------------------------------------------------------
+# (b) data write
+# ---------------------------------------------------------------------------
+
+[[surfaces]]
+id = "flux.dispatch"
+class = "write"
+support = "stub"
+webapp_analogue = "FluxDispatcher.dispatch({ type })"
+notes = "mods dispatch ~25 distinct action types; AUDIO_TOGGLE_SELF_MUTE and LAYER_POP_ALL are the most common"
+
+[[surfaces]]
+id = "dataStore.set"
+class = "write"
+support = "stub"
+webapp_analogue = "Vencord.Api.DataStore.set / BdApi.Data.save"
+
+[[surfaces]]
+id = "dataStore.del"
+class = "write"
+support = "stub"
+webapp_analogue = "Vencord.Api.DataStore.del / BdApi.Data.delete"
+
+[[surfaces]]
+id = "settings.write"
+class = "write"
+support = "stub"
+webapp_analogue = "Vencord.Api.Settings / SettingsStore.markAsChanged"
+
+[[surfaces]]
+id = "stores.MediaEngineStore.mutators"
+class = "write"
+support = "stub"
+webapp_analogue = "MediaEngineStore.engine.setSelfMute / setLocalVolume / setLocalMute"
+
+[[surfaces]]
+id = "rpc.setActivity"
+class = "write"
+support = "stub"
+webapp_analogue = "FluxDispatcher.dispatch({ type: 'LOCAL_ACTIVITY_UPDATE' })"
+
+# ---------------------------------------------------------------------------
+# (c) subscription
+# ---------------------------------------------------------------------------
+
+[[surfaces]]
+id = "stores.addChangeListener"
+class = "subscription"
+support = "stub"
+webapp_analogue = "FluxStore.addChangeListener"
+notes = "one broadcast channel per surface"
+
+[[surfaces]]
+id = "stores.addConditionalChangeListener"
+class = "subscription"
+support = "stub"
+webapp_analogue = "FluxStore.addConditionalChangeListener"
+
+[[surfaces]]
+id = "stores.removeChangeListener"
+class = "subscription"
+support = "stub"
+webapp_analogue = "FluxStore.removeChangeListener"
+
+[[surfaces]]
+id = "flux.subscribe"
+class = "subscription"
+support = "stub"
+webapp_analogue = "FluxDispatcher.subscribe"
+notes = "mods subscribe to TRACK, MESSAGE_CREATE, CHANNEL_SELECT, RELATIONSHIP_*, VOICE_STATE_UPDATES"
+
+[[surfaces]]
+id = "flux.addInterceptor"
+class = "subscription"
+support = "stub"
+webapp_analogue = "FluxDispatcher.addInterceptor"
+
+[[surfaces]]
+id = "settings.changeListener"
+class = "subscription"
+support = "stub"
+webapp_analogue = "SettingsStore.addChangeListener / addPrefixChangeListener"
+
+[[surfaces]]
+id = "stores.MediaEngineStore.events"
+class = "subscription"
+support = "stub"
+webapp_analogue = "MediaEngineStore.engine.on('DeviceChange'|'VolumeChange'|'VideoInputInitialized')"
+
+[[surfaces]]
+id = "theme.changeListener"
+class = "subscription"
+support = "stub"
+webapp_analogue = "Vencord.Api.Themes.addThemeChangeListener"
+
+# ---------------------------------------------------------------------------
+# (d) ui injection — free for a native client, because it owns the render tree
+# ---------------------------------------------------------------------------
+
+[[surfaces]]
+id = "ui.renderMessageAccessory"
+class = "ui"
+support = "stub"
+webapp_analogue = "renderMessageAccessory"
+notes = "upstream this is injected by patching MessageAccessories._modifyAccessories"
+
+[[surfaces]]
+id = "ui.renderMessageDecoration"
+class = "ui"
+support = "stub"
+webapp_analogue = "renderMessageDecoration"
+
+[[surfaces]]
+id = "ui.renderMemberListDecorator"
+class = "ui"
+support = "stub"
+webapp_analogue = "renderMemberListDecorator"
+
+[[surfaces]]
+id = "ui.chatBarButton"
+class = "ui"
+support = "stub"
+webapp_analogue = "chatBarButton"
+
+[[surfaces]]
+id = "ui.messagePopoverButton"
+class = "ui"
+support = "stub"
+webapp_analogue = "messagePopoverButton"
+
+[[surfaces]]
+id = "ui.userProfileBadge"
+class = "ui"
+support = "stub"
+webapp_analogue = "userProfileBadge"
+
+[[surfaces]]
+id = "ui.settingsAbout"
+class = "ui"
+support = "stub"
+webapp_analogue = "settingsAboutComponent"
+
+[[surfaces]]
+id = "ui.toolbox"
+class = "ui"
+support = "stub"
+webapp_analogue = "toolboxActions"
+
+[[surfaces]]
+id = "ui.contextMenu"
+class = "ui"
+support = "stub"
+webapp_analogue = "contextMenus[navId] / BdApi.ContextMenu.patch"
+
+[[surfaces]]
+id = "ui.serverListElement"
+class = "ui"
+support = "stub"
+webapp_analogue = "ServerList.addServerListElement"
+
+[[surfaces]]
+id = "ui.settingsPanel"
+class = "ui"
+support = "stub"
+webapp_analogue = "BdApi.UI.buildSettingsPanel"
+
+[[surfaces]]
+id = "ui.notification"
+class = "ui"
+support = "stub"
+webapp_analogue = "Vencord.Api.Notifications.showNotification"
+
+[[surfaces]]
+id = "ui.modal"
+class = "ui"
+support = "stub"
+webapp_analogue = "BdApi.UI.showConfirmationModal / openDialog"
+
+[[surfaces]]
+id = "ui.components"
+class = "ui"
+support = "stub"
+webapp_analogue = "BdApi.Components.* (18 widgets)"
+
+# ---------------------------------------------------------------------------
+# (e) internals patch — not replicable
+# ---------------------------------------------------------------------------
+
+[[surfaces]]
+id = "internals.webpackPatches"
+class = "internals"
+support = "unsupported"
+webapp_analogue = "patches: [{ find, replacement }] in definePlugin"
+notes = "string-replaces minified module factory source and re-evals it; no native equivalent"
+
+[[surfaces]]
+id = "internals.patcherBefore"
+class = "internals"
+support = "unsupported"
+webapp_analogue = "Patcher.before (BetterDiscord)"
+
+[[surfaces]]
+id = "internals.patcherInstead"
+class = "internals"
+support = "unsupported"
+webapp_analogue = "Patcher.instead (BetterDiscord)"
+
+[[surfaces]]
+id = "internals.patcherAfter"
+class = "internals"
+support = "unsupported"
+webapp_analogue = "Patcher.after (BetterDiscord)"
+
+[[surfaces]]
+id = "internals.patcherUnpatchAll"
+class = "internals"
+support = "unsupported"
+webapp_analogue = "Patcher.unpatchAll"
+notes = "requires the patcher to own the original function reference"
+
+[[surfaces]]
+id = "internals.spitroast"
+class = "internals"
+support = "unsupported"
+webapp_analogue = "shelter.patcher.* (spitroast)"
+notes = "what Legcord's own plugin system uses, via src/discord/preload/plugins.mts"
+
+[[surfaces]]
+id = "internals.getModule"
+class = "internals"
+support = "unsupported"
+webapp_analogue = "BdApi.Webpack.getModule / Webpack.findByProps"
+notes = "substitutable: a native client owns its modules and can export them by name"
+
+[[surfaces]]
+id = "internals.webpackRequire"
+class = "internals"
+support = "unsupported"
+webapp_analogue = "wreq"
+notes = "reached by overriding Function.prototype.m's setter"
+
+[[surfaces]]
+id = "internals.findByCode"
+class = "internals"
+support = "unsupported"
+webapp_analogue = "BdApi.Webpack.Filters.byStrings / byRegex"
+
+[[surfaces]]
+id = "internals.findByStrings"
+class = "internals"
+support = "unsupported"
+webapp_analogue = "BdApi.Webpack.Filters.byStrings"
+
+[[surfaces]]
+id = "internals.findByRegex"
+class = "internals"
+support = "unsupported"
+webapp_analogue = "BdApi.Webpack.Filters.byRegex"
+
+[[surfaces]]
+id = "internals.findBySource"
+class = "internals"
+support = "unsupported"
+webapp_analogue = "BdApi.Webpack.Filters.bySource"
+
+[[surfaces]]
+id = "internals.getMangled"
+class = "internals"
+support = "unsupported"
+webapp_analogue = "BdApi.Webpack.getMangled / Vencord mapMangledModule"
+notes = "depends on Discord's name mangling, which is an obfuscation artifact"
+
+[[surfaces]]
+id = "internals.mapMangledModule"
+class = "internals"
+support = "unsupported"
+webapp_analogue = "Vencord.Webpack.mapMangledModule"
+
+[[surfaces]]
+id = "internals.patchTextMacros"
+class = "internals"
+support = "unsupported"
+webapp_analogue = "$self, #{intl::KEY}, the \\i placeholder"
+notes = "text macros that only make sense when rewriting minified source"
