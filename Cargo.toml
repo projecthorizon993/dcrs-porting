@@ -4,6 +4,7 @@ members = [
     "crates/dcrs-theme",
     "crates/dcrs-compat",
     "crates/dcrs-plugins",
+    "crates/dcrs-core",
     "crates/dcrs-port",
 ]
 
@@ -18,6 +19,7 @@ description = "Tooling to port Discord client mods and themes to a native Rust c
 dcrs-theme = { path = "crates/dcrs-theme", version = "0.1.0" }
 dcrs-compat = { path = "crates/dcrs-compat", version = "0.1.0" }
 dcrs-plugins = { path = "crates/dcrs-plugins", version = "0.1.0" }
+dcrs-core = { path = "crates/dcrs-core", version = "0.1.0" }
 
 cssparser = "0.31"
 serde = { version = "1", features = ["derive"] }
@@ -26,6 +28,7 @@ toml = "0.9"
 thiserror = "2"
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
+tokio = { version = "1", features = ["sync", "rt", "macros", "time"] }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

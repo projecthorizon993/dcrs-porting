@@ -23,37 +23,37 @@ version = 1
 [[surfaces]]
 id = "stores.ChannelStore"
 class = "read"
-support = "stub"
+support = "partial"
 webapp_analogue = "Vencord.Webpack.Common.ChannelStore"
-notes = "getChannel, getBasicChannel, getChannelIds, getDMFromUserId, getAllThreadsForGuild"
+notes = "getChannel, getBasicChannel, getChannelIds, getDMFromUserId, getAllThreadsForGuild; dcrs-core Cache implements getChannel and getDMFromUserId"
 
 [[surfaces]]
 id = "stores.GuildStore"
 class = "read"
-support = "stub"
+support = "partial"
 webapp_analogue = "Vencord.Webpack.Common.GuildStore"
-notes = "getGuild, getGuildsArray, getGuildIds, getGuildCount"
+notes = "getGuild, getGuildsArray, getGuildIds, getGuildCount; dcrs-core Cache implements getGuild and ordered guilds()"
 
 [[surfaces]]
 id = "stores.UserStore"
 class = "read"
-support = "stub"
+support = "partial"
 webapp_analogue = "Vencord.Webpack.Common.UserStore"
-notes = "getCurrentUser, getUser, findByTag, filter, takeSnapshot"
+notes = "getCurrentUser, getUser, findByTag, filter, takeSnapshot; dcrs-core Cache implements getUser and users()"
 
 [[surfaces]]
 id = "stores.GuildMemberStore"
 class = "read"
-support = "stub"
+support = "partial"
 webapp_analogue = "Vencord.Webpack.Common.GuildMemberStore"
-notes = "getMember, getMemberIdsByGuild, getMemberCount"
+notes = "getMember, getMemberIdsByGuild, getMemberCount; dcrs-core Cache implements member() and guild_members()"
 
 [[surfaces]]
 id = "stores.MessageStore"
 class = "read"
-support = "stub"
+support = "partial"
 webapp_analogue = "Vencord.Webpack.Common.MessageStore"
-notes = "getMessage, getLastMessageId, getMessageCount"
+notes = "getMessage, getLastMessageId, getMessageCount; dcrs-core Cache implements message() and channel_messages()"
 
 [[surfaces]]
 id = "stores.SelectedChannelStore"
@@ -100,6 +100,7 @@ id = "stores.VoiceStateStore"
 class = "read"
 support = "stub"
 webapp_analogue = "Vencord.Webpack.Common.VoiceStateStore"
+notes = "lands with Phase 5 voice; the session machine already tracks the session id it needs"
 
 [[surfaces]]
 id = "stores.GuildRoleStore"
@@ -195,21 +196,22 @@ webapp_analogue = "FluxDispatcher.dispatch({ type: 'LOCAL_ACTIVITY_UPDATE' })"
 [[surfaces]]
 id = "stores.addChangeListener"
 class = "subscription"
-support = "stub"
+support = "implemented"
 webapp_analogue = "FluxStore.addChangeListener"
-notes = "one broadcast channel per surface"
+notes = "one broadcast channel per surface; dcrs-core EventBus"
+
+[[surfaces]]
+id = "stores.removeChangeListener"
+class = "subscription"
+support = "implemented"
+webapp_analogue = "FluxStore.removeChangeListener"
+notes = "dropping the tokio broadcast Receiver unsubscribes"
 
 [[surfaces]]
 id = "stores.addConditionalChangeListener"
 class = "subscription"
 support = "stub"
 webapp_analogue = "FluxStore.addConditionalChangeListener"
-
-[[surfaces]]
-id = "stores.removeChangeListener"
-class = "subscription"
-support = "stub"
-webapp_analogue = "FluxStore.removeChangeListener"
 
 [[surfaces]]
 id = "flux.subscribe"

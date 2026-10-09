@@ -32,10 +32,46 @@ is internals patching.
 
 | Crate | What it does |
 |---|---|
+| [`dcrs-core`](crates/dcrs-core) | Headless client core: gateway session state machine, event bus, cache, rate limiter, credential storage. No UI, no sockets. |
 | [`dcrs-theme`](crates/dcrs-theme) | CSS subset parser, variable resolution, class-map translation, and a shadow tree so selectors have something to match. |
 | [`dcrs-compat`](crates/dcrs-compat) | The capability registry: every surface, its class, and whether it is implemented. |
 | [`dcrs-plugins`](crates/dcrs-plugins) | The native plugin ABI. Manifests mirror Vencord's `PluginDef` field-for-field. |
 | [`dcrs-port`](crates/dcrs-port) | The CLI. Analyzes a theme or plugin and prints a portability verdict. |
+
+### `dcrs-core`
+
+Nothing in it opens a socket. The gateway sits behind a `GatewayTransport` trait, so the whole
+connect → identify → heartbeat → resume → reconnect cycle is tested against a mock with no network
+and no token.
+
+```rust
+use dcrs_core::{Backoff, IdentifyConfig, Inbound, Session, SessionConfig};
+
+let mut session = Session::new(SessionConfig::new(IdentifyConfig::new("token", 402_402)));
+
+// Discord sends Hello first.
+let step = session.on_frame(&Inbound::hello(41_250));
+assert!(matches!(step.sent[0], dcrs_core::Outbound::Identify { .. }));
+
+// Ready gives us what a later reconnect needs to resume.
+session.on_frame(&Inbound::dispatch(
+    "READY",
+    1,
+    serde_json::json!({ "session_id": "abc", "user": { "id": "42" } }),
+));
+assert!(session.can_resume());
+```
+
+Notable details:
+
+- **Dispatch frames have no `op` field.** Discord omits it, so the parser matches on the event
+  name instead.
+- **Snowflakes serialize as strings**, because they exceed JavaScript's 53-bit safe integer range.
+- **Backoff uses full jitter** (`random(0, min(cap, base·2ⁿ))`) so clients dropped by a gateway
+  deploy don't reconnect in lockstep.
+- **`Credential` redacts its own `Debug`.** Redaction lives on the credential, not on a wrapper,
+  because a wrapper is one refactor away from being bypassed.
+- **The cache is `Arc<RwLock<..>>`.** Clones are cheap and the UI can read from another thread.
 
 ## Usage
 
@@ -43,7 +79,7 @@ is internals patching.
 $ dcrs-port --registry assets/capabilities.toml coverage
 capability registry
   surfaces   62
-  coverage   0.0% of replicable surfaces
+  coverage   14.9% of replicable surfaces
   by class
     (a) data read          19  replicable
     (b) data write          6  replicable
@@ -115,7 +151,7 @@ those rules explicitly rather than pretending they work.
 ## Development
 
 ```console
-cargo test --workspace     # 105 tests
+cargo test --workspace     # 185 tests
 cargo clippy --workspace --all-targets
 cargo fmt --all --check
 ```
