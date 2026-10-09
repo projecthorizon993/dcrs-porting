@@ -10,18 +10,18 @@ members = [
 ]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 rust-version = "1.85"
 license = "MIT"
 description = "Tooling to port Discord client mods and themes to a native Rust client"
 
 [workspace.dependencies]
-dcrs-theme = { path = "crates/dcrs-theme", version = "0.1.0" }
-dcrs-compat = { path = "crates/dcrs-compat", version = "0.1.0" }
-dcrs-plugins = { path = "crates/dcrs-plugins", version = "0.1.0" }
-dcrs-core = { path = "crates/dcrs-core", version = "0.1.0" }
-dcrs-serein = { path = "crates/dcrs-serein", version = "0.1.0" }
+dcrs-theme = { path = "crates/dcrs-theme", version = "0.2.0" }
+dcrs-compat = { path = "crates/dcrs-compat", version = "0.2.0" }
+dcrs-plugins = { path = "crates/dcrs-plugins", version = "0.2.0" }
+dcrs-core = { path = "crates/dcrs-core", version = "0.2.0" }
+dcrs-serein = { path = "crates/dcrs-serein", version = "0.2.0" }
 
 cssparser = "0.31"
 serde = { version = "1", features = ["derive"] }

@@ -1,21 +1,68 @@
 name: Release
 
-# Publishing is tag-driven so a commit cannot ship without a version chosen on purpose. The version is
-# read from Cargo.toml rather than trusted from the tag, and a mismatch fails the job rather than
-# producing a binary that reports a version it does not have.
+# Fully automatic: push a commit that bumps `version` in Cargo.toml, and a release appears. No tag to
+# create, no draft to publish.
+#
+# Automatic does not mean every commit ships one. Publishing on every push would put a public release
+# behind each typo fix, and the version is the thing worth deciding on — so a commit that does not
+# change the version does nothing here beyond a cheap check. That keeps the trigger automatic while
+# leaving the decision to release explicit, and a single source of truth: the version is read from
+# Cargo.toml, never from a tag, so a binary can never claim a version it was not built from.
 on:
   push:
-    tags: ["v*"]
-
-permissions:
-  contents: write
+    branches: [main]
+  workflow_dispatch:
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  version:
+    name: Decide whether to release
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.read.outputs.version }}
+      changed: ${{ steps.compare.outputs.changed }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read the workspace version
+        id: read
+        shell: bash
+        run: |
+          set -euo pipefail
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+          if [ -z "$version" ]; then
+            echo "::error::could not read version from Cargo.toml"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Cargo.toml version is $version"
+
+      # Comparing against the existing release rather than a tag list, so a re-run is idempotent and
+      # a force-pushed or deleted tag cannot make the workflow think there is nothing published.
+      - name: Has the version changed since the last release?
+        id: compare
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          wanted="v${{ steps.read.outputs.version }}"
+          latest=$(gh release view --json tagName --jq '.tagName' 2>/dev/null || echo '')
+          echo "latest published release: ${latest:-none}"
+          if [ "$latest" = "$wanted" ]; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "version unchanged; nothing to release"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "releasing $wanted"
+          fi
+
   build:
     name: ${{ matrix.target }}
+    needs: version
+    if: needs.version.outputs.changed == 'true'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -33,18 +80,6 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
-
-      - name: Reject a tag that disagrees with Cargo.toml
-        shell: bash
-        run: |
-          set -euo pipefail
-          version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
-          tag="${GITHUB_REF#refs/tags/}"
-          echo "Cargo.toml says $version; tag says $tag"
-          if [ "$tag" != "v$version" ]; then
-            echo "::error::tag $tag does not match Cargo.toml version $version"
-            exit 1
-          fi
 
       - name: Install Linux build deps
         if: matrix.os == 'ubuntu-latest'
@@ -139,8 +174,11 @@ jobs:
 
   release:
     name: Publish
-    needs: build
+    needs: [version, build]
+    if: needs.version.outputs.changed == 'true'
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
 
@@ -204,12 +242,21 @@ jobs:
           NOTES
           echo "notes written"
 
+      # Published, not drafted. A draft would put a manual click back on the path this workflow exists
+      # to remove, and by this point the artifacts have already been built and executed by the three
+      # jobs above — the risky part is behind us.
+      #
+      # `overwrite_files` matters on a re-run: without it a second attempt at the same version leaves
+      # the first attempt's binaries alongside the new ones, and a download page offering two builds of
+      # the same version is worse than one that failed.
       - name: Create the release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: v${{ needs.version.outputs.version }}
+          name: dcrs-port ${{ needs.version.outputs.version }}
           body_path: notes.md
-          # Drafted rather than published: a release is the thing a user downloads, and it should be
-          # looked at before anyone does.
-          draft: true
+          draft: false
           prerelease: false
+          overwrite_files: true
+          fail_on_unmatched_files: true
           files: artifacts/*

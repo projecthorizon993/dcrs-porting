@@ -250,7 +250,7 @@ checksum = "4583a4551df46e2792f82ceeac45e850d2e2d5debba0b91f102385cda5b11f06"
 
 [[package]]
 name = "dcrs-compat"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "dcrs-theme",
  "serde",
@@ -260,7 +260,7 @@ dependencies = [
 
 [[package]]
 name = "dcrs-core"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "dcrs-compat",
  "flate2",
@@ -274,7 +274,7 @@ dependencies = [
 
 [[package]]
 name = "dcrs-plugins"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "dcrs-compat",
  "serde",
@@ -284,7 +284,7 @@ dependencies = [
 
 [[package]]
 name = "dcrs-port"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -298,7 +298,7 @@ dependencies = [
 
 [[package]]
 name = "dcrs-serein"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "dcrs-theme",
  "serde",
@@ -308,7 +308,7 @@ dependencies = [
 
 [[package]]
 name = "dcrs-theme"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "cssparser",
  "serde",

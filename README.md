@@ -228,25 +228,32 @@ cargo fmt --all --check
 
 ### Releases
 
-Releases are tag-driven. The tag must be `v<version>` and must match `version` in the root
-`Cargo.toml` — a mismatch fails the build rather than shipping a binary that reports a version it does
-not have.
+Automatic. Bump `version` in the root `Cargo.toml`, commit, push — a release appears. There is no tag
+to create and nothing to click.
 
 ```console
-# 1. bump the version in Cargo.toml, commit, push, and let CI go green
-# 2. tag that exact commit
-git tag v0.1.0
-git push origin v0.1.0
+# edit version = "0.3.0" in Cargo.toml, then
+git commit -am "Release 0.3.0"
+git push
 ```
 
-The workflow builds `dcrs-port` for Linux x86-64, Windows x86-64, and macOS aarch64, **executes each
-artifact** before uploading it, and creates a draft release for you to look at before it goes public.
+Automatic does not mean every commit ships one. Publishing on every push would put a public release
+behind each typo fix, so the workflow compares `Cargo.toml`'s version against the latest release and
+does nothing when they match. The trigger is automatic; the decision to release is still the version
+number, which is the thing worth deciding on.
 
-The smoke test is not ceremony. The capability registry and class map are `include_str!`d into the
-binary rather than shipped beside it, and an earlier build compiled cleanly while shipping no data at
-all — `coverage` reported zero surfaces, which reads exactly like a real answer. The workflow now
-asserts the registry is non-empty, that a conversion produces a package with the manifest the host
-requires, and that a hashed selector still translates.
+The version is read from `Cargo.toml` and never from a tag, so a binary cannot claim a version it was
+not built from. Re-running is idempotent — same version, same release — and `overwrite_files` means a
+second attempt replaces the first attempt's binaries rather than sitting beside them.
+
+`dcrs-port` is built for Linux x86-64, Windows x86-64, and macOS Apple Silicon, uploaded as bare
+executables with no archive in the way.
+
+**Each artifact is executed before it is uploaded**, and that is not ceremony. The capability registry
+and class map are `include_str!`d into the binary rather than shipped beside it, and an earlier build
+compiled cleanly while shipping no data at all — `coverage` reported zero surfaces, which reads exactly
+like a real answer. The workflow now asserts the registry is non-empty, that a conversion produces a
+package with the manifest the host requires, and that a hashed selector still translates.
 
 ### Toolchain note
 
