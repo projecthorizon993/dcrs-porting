@@ -1,0 +1,193 @@
+name: Release
+
+# Publishing is tag-driven so a commit cannot ship without a version chosen on purpose. The version is
+# read from Cargo.toml rather than trusted from the tag, and a mismatch fails the job rather than
+# producing a binary that reports a version it does not have.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            archive: tar.gz
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            archive: zip
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            archive: tar.gz
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Reject a tag that disagrees with Cargo.toml
+        shell: bash
+        run: |
+          set -euo pipefail
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+          tag="${GITHUB_REF#refs/tags/}"
+          echo "Cargo.toml says $version; tag says $tag"
+          if [ "$tag" != "v$version" ]; then
+            echo "::error::tag $tag does not match Cargo.toml version $version"
+            exit 1
+          fi
+
+      - name: Install Linux build deps
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config libasound2-dev
+
+      # Same reasoning as CI: Windows runners already ship a toolchain, and the rustup bootstrap
+      # download there fails often enough to be worth avoiding.
+      - name: Install toolchain
+        if: matrix.os != 'windows-latest'
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+          targets: ${{ matrix.target }}
+
+      - name: Add toolchain and target to preinstalled toolchain
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          rustup target add ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      - name: Build
+        run: cargo build --release --target ${{ matrix.target }} -p dcrs-port
+
+      # A release binary is what someone actually runs, and the capability registry and class map are
+      # compiled in with `include_str!` rather than shipped beside it. A build that compiles but ships
+      # empty data reports zero surfaces and every hashed selector as unmapped, which looks exactly
+      # like a real answer. So the artifact is executed and its output checked, not just uploaded.
+      - name: Smoke test the artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          ext=""
+          if [ "${{ runner.os }}" = "Windows" ]; then ext=".exe"; fi
+          bin="target/${{ matrix.target }}/release/dcrs-port$ext"
+
+          "$bin" --version
+
+          # The bundled registry must be present and non-empty.
+          coverage=$("$bin" coverage --json)
+          echo "$coverage"
+          if ! grep -Eq '"surfaces": *[1-9]' <<< "$coverage"; then
+            echo "::error::the bundled capability registry is empty in the release artifact"
+            echo "$coverage"
+            exit 1
+          fi
+
+          # Converting must produce a package with the manifest the host actually requires.
+          "$bin" convert examples/example-theme.css --out "$RUNNER_TEMP/smoke.serein-extension"
+          test -s "$RUNNER_TEMP/smoke.serein-extension"
+          grep -q '"api_version": 1' "$RUNNER_TEMP/smoke.serein-extension"
+          grep -q '"kind": "theme"' "$RUNNER_TEMP/smoke.serein-extension"
+
+          # A hashed selector must translate, which proves the class map is embedded too.
+          "$bin" theme examples/example-theme.css | grep -q 'hashed'
+
+      - name: Package
+        shell: bash
+        run: |
+          set -euo pipefail
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+          staging="dcrs-port-$version-${{ matrix.target }}"
+          mkdir -p "$staging"
+          ext=""
+          if [ "${{ runner.os }}" = "Windows" ]; then ext=".exe"; fi
+          cp "target/${{ matrix.target }}/release/dcrs-port$ext" "$staging/"
+          cp README.md "$staging/"
+          # Cargo.toml declares MIT but no LICENSE file is committed, so this is best-effort rather
+          # than a step that fails a release over a missing file.
+          if [ -f LICENSE ]; then cp LICENSE "$staging/"; fi
+          if [ "${{ matrix.archive }}" = "zip" ]; then
+            (cd "$staging" && zip -r "../$staging.zip" .)
+          else
+            tar -czf "$staging.tar.gz" "$staging"
+          fi
+          echo "ASSET=$staging.${{ matrix.archive }}" >> "$GITHUB_ENV"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dcrs-port-${{ matrix.target }}
+          path: ${{ env.ASSET }}
+          if-no-files-found: error
+
+  release:
+    name: Publish
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: List artifacts
+        run: ls -l artifacts
+
+      - name: Write release notes
+        run: |
+          cat > notes.md <<'NOTES'
+          ## dcrs-port
+
+          The porting tool. It analyzes Discord themes and mods, reports how portable they are to a
+          native client, and converts a BetterDiscord or Vencord theme into a native Serein
+          `.serein-extension` package.
+
+          ### Trying it
+
+          ```sh
+          dcrs-port plugin    my-mod.ts          # what APIs it uses, and which are replicable
+          dcrs-port effects   my-mod.ts          # what it does, independent of how
+          dcrs-port media     my-mod.ts          # what it does with media, and whether that ports
+          dcrs-port theme     my-theme.css       # what the CSS is made of
+          dcrs-port convert   my-theme.css       # writes a .serein-extension package
+          dcrs-port coverage                      # what the capability registry knows
+          ```
+
+          Add `--json` to any command for machine-readable output. `effects` and `media` exit non-zero
+          when a plugin does something that does not port, so they can gate a pipeline rather than
+          only inform one.
+
+          `convert` writes `my-theme.serein-extension` beside the input unless you pass `--out`. It
+          reports every declaration that did not survive, because Serein accepts any subset of its
+          tokens and a silently-worse theme is otherwise indistinguishable from a faithful port.
+
+          To try the output, import the package through Serein's Settings > Themes.
+          NOTES
+          echo "notes written"
+
+      - name: Create the release
+        uses: softprops/action-gh-release@v2
+        with:
+          body_path: notes.md
+          # Drafted rather than published: a release is the thing a user downloads, and it should be
+          # looked at before anyone does.
+          draft: true
+          prerelease: false
+          files: artifacts/*

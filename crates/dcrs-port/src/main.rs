@@ -297,7 +297,7 @@ fn convert_json(report: &convert::ConversionReport, out: &Path) -> serde_json::V
 fn load_registry(path: Option<&Path>) -> anyhow::Result<Registry> {
     match path {
         Some(p) => Registry::load(p).with_context(|| format!("loading registry {}", p.display())),
-        None => Ok(Registry::default()),
+        None => Registry::bundled().context("parsing the bundled capability registry"),
     }
 }
 
@@ -305,6 +305,6 @@ fn load_class_map(path: Option<&Path>) -> anyhow::Result<dcrs_theme::ClassMap> {
     match path {
         Some(p) => dcrs_theme::ClassMap::load(p)
             .with_context(|| format!("loading class map {}", p.display())),
-        None => Ok(dcrs_theme::ClassMap::default()),
+        None => dcrs_theme::ClassMap::bundled().context("parsing the bundled class map"),
     }
 }

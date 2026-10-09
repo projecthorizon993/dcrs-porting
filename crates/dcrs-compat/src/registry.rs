@@ -138,6 +138,11 @@ struct RegistryFile {
 /// Highest registry schema version this build understands.
 pub const MAX_REGISTRY_VERSION: u32 = 1;
 
+/// The registry compiled into the binary.
+///
+/// The path is relative to this file so it cannot drift when a crate is moved.
+const BUNDLED_REGISTRY: &str = include_str!("../../../assets/capabilities.toml");
+
 /// Errors from loading or querying the registry.
 #[derive(Debug, thiserror::Error)]
 pub enum RegistryError {
@@ -223,6 +228,19 @@ impl std::fmt::Display for Verdict {
 }
 
 impl Registry {
+    /// The registry compiled into the binary.
+    ///
+    /// Embedded rather than shipped alongside as a data file, because a downloaded release binary is
+    /// copied to a machine with no repo on it. An empty default made `coverage` report zero surfaces,
+    /// which reads as "nothing is replicable" rather than "the data was not there".
+    ///
+    /// # Errors
+    /// Returns an error only if the bundled file is malformed, which would be a build-time mistake
+    /// caught by the test below rather than something a user can cause.
+    pub fn bundled() -> Result<Self, RegistryError> {
+        Self::from_toml(BUNDLED_REGISTRY)
+    }
+
     /// Loads the registry from a TOML file.
     ///
     /// # Errors
@@ -543,5 +561,18 @@ since = "0.1.0"
         assert!(!Class::Internals.is_replicable());
         assert!(Class::Ui.is_replicable());
         assert_eq!(Class::Ui.label(), "ui injection");
+    }
+
+    #[test]
+    fn the_bundled_registry_is_not_empty() {
+        // A release binary is copied to a machine with no repo on it. An empty default here made
+        // `coverage` report zero surfaces, which reads as "nothing is replicable" rather than "no
+        // data was shipped" — so this asserts the file parses and actually carries surfaces.
+        let registry = Registry::bundled().expect("the bundled registry should parse");
+        assert!(
+            !registry.is_empty(),
+            "the bundled registry must ship with surfaces"
+        );
+        assert!(registry.coverage() > 0.0);
     }
 }

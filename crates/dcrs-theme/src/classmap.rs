@@ -11,6 +11,14 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
+/// The class map compiled into the binary.
+///
+/// A downloaded release binary is copied to a machine with no repo on it, so a map that only exists as
+/// a data file leaves every hashed selector reported as unmapped — which reads as "the theme uses
+/// classes we do not know" rather than "we brought no map". The path is relative to this file so it
+/// cannot drift when the crate moves.
+const BUNDLED_CLASS_MAP: &str = include_str!("../../../assets/class-map.json");
+
 /// A logical layout region, used to sanity-check a mapping and to let the porting tool report
 /// which regions of the UI a theme actually touches.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -154,6 +162,10 @@ impl ClassMap {
     /// # Errors
     /// Returns an error if the file cannot be read, is not valid JSON, declares an unsupported
     /// schema version, or contains conflicting entries.
+    pub fn bundled() -> Result<Self, ClassMapError> {
+        Self::from_json(BUNDLED_CLASS_MAP)
+    }
+
     pub fn load(path: impl AsRef<Path>) -> Result<Self, ClassMapError> {
         let raw = std::fs::read_to_string(path)?;
         Self::from_json(&raw)
@@ -460,5 +472,18 @@ mod tests {
         assert!(!looks_hashed("chat-content"));
         assert!(!looks_hashed("-2f1c9d"), "empty stem is not a hashed name");
         assert!(!looks_hashed("thing-ab"), "suffix too short");
+    }
+
+    #[test]
+    fn the_bundled_class_map_is_not_empty() {
+        // Same reasoning as the registry: a release binary ships with no repo beside it, so an empty
+        // default left every hashed selector reported as unmapped — which reads as "this theme uses
+        // classes we do not know" rather than "we brought no map".
+        let map = ClassMap::bundled().expect("the bundled class map should parse");
+        assert!(
+            !map.is_empty(),
+            "the bundled class map must ship with entries"
+        );
+        assert_eq!(map.translate("channel-2f1c9d"), Some("channel"));
     }
 }

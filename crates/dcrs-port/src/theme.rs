@@ -134,13 +134,21 @@ impl ThemeReport {
 }
 
 /// Analyzes theme CSS against a class map.
+///
+/// The display name comes from the theme's own `@name` header when it has one. Hardcoding "untitled"
+/// made every report read as though the file were anonymous, which is unhelpful when comparing a
+/// handful of themes on a real machine.
 #[must_use]
 pub fn analyze(source: &str, map: &ClassMap) -> ThemeReport {
+    let header = dcrs_serein::package::header_metadata(source).unwrap_or_default();
+    let name = header.name.unwrap_or_else(|| "untitled".to_owned());
+    let author = header.author;
+
     // A malformed stylesheet still yields a useful report, so fall back rather than fail.
-    let Ok(theme) = Theme::new("untitled", source) else {
+    let Ok(theme) = Theme::new(name.clone(), source) else {
         return ThemeReport {
-            name: "untitled".to_owned(),
-            author: None,
+            name,
+            author,
             tiers: BTreeMap::new(),
             unmapped_classes: vec![],
             mapped_classes: 0,
@@ -221,8 +229,10 @@ pub fn analyze(source: &str, map: &ClassMap) -> ThemeReport {
     };
 
     ThemeReport {
+        // `Theme` scraped the same headers; prefer its reading and fall back to the one taken above so
+        // the two can never disagree about which file this was.
         name: theme.name().to_owned(),
-        author: theme.author().map(str::to_owned),
+        author: theme.author().map(str::to_owned).or(author),
         tiers,
         unmapped_classes: unmapped,
         mapped_classes,

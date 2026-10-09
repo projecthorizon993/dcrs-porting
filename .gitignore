@@ -6,6 +6,11 @@ Cargo.lock.bak
 /legcord-ref
 *.local
 
+# `dcrs-port convert` writes its package beside the input by default, which puts a build artifact
+# in the tree the moment anyone runs the example from the README.
+*.serein-extension
+!crates/dcrs-serein/tests/fixtures/*.serein-extension
+
 # Editor
 .idea/
 .vscode/

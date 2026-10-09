@@ -34,9 +34,10 @@ is internals patching.
 |---|---|
 | [`dcrs-core`](crates/dcrs-core) | Headless client core: gateway session state machine, event bus, cache, rate limiter, credential storage. No UI, no sockets by default. |
 | [`dcrs-theme`](crates/dcrs-theme) | CSS subset parser, variable resolution, class-map translation, and a shadow tree so selectors have something to match. |
-| [`dcrs-compat`](crates/dcrs-compat) | The capability registry: every surface, its class, and whether it is implemented. |
+| [`dcrs-compat`](crates/dcrs-compat) | The capability registry: every surface, its class, and whether it is implemented. Plus a separate media axis — a client can speak every codec a mod asks for and still have nothing for a media plugin to land on. |
+| [`dcrs-serein`](crates/dcrs-serein) | Serein's theme schema as typed Rust, and the projection of a theme's CSS variables onto its 18 colour tokens and 15 control metrics. |
 | [`dcrs-plugins`](crates/dcrs-plugins) | The native plugin ABI. Manifests mirror Vencord's `PluginDef` field-for-field. |
-| [`dcrs-port`](crates/dcrs-port) | The CLI. Analyzes a theme or plugin and prints a portability verdict, by API surface or by effect. |
+| [`dcrs-port`](crates/dcrs-port) | The CLI. Analyzes a theme or plugin and prints a portability verdict, by API surface, by effect, or by media; and converts a theme into a native Serein package. |
 
 ### `dcrs-core`
 
@@ -75,8 +76,11 @@ Notable details:
 
 ## Usage
 
+The capability registry and class map are **compiled into the binary**, so a downloaded release needs
+no data files beside it. Pass `--registry` or `--class-map` only to test a different or edited copy.
+
 ```console
-$ dcrs-port --registry assets/capabilities.toml coverage
+$ dcrs-port coverage
 capability registry
   surfaces   62
   coverage   14.9% of replicable surfaces
@@ -89,39 +93,48 @@ capability registry
 ```
 
 ```console
-$ dcrs-port --registry assets/capabilities.toml plugin examples/example-plugin.ts
+$ dcrs-port plugin examples/example-plugin.ts
 plugin: ExamplePlugin
   definePlugin detected: true
   (a) data read  [3]
-  (a) stores.ChannelStore                not-implemented  line 33
+  (a) stores.ChannelStore                partial          line 33
+  (a) stores.GuildMemberStore            partial          line 34
+  (a) stores.MediaEngineStore            not-implemented  line 41
   (b) data write  [3]
+  (b) dataStore.del                      not-implemented  line 55
+  (b) dataStore.set                      not-implemented  line 51
   (b) flux.dispatch                      not-implemented  line 37
   (d) ui injection  [2]
-  (d) ui.renderMessageAccessory          not-implemented  line 60
-  (e) internals patch  [2]
-  (e) internals.patcherBefore            not-replicable   line 47
-  (e) patches:[] array with ~2 entries          NOT REPLICABLE
-  blocker: yes - needs a native rewrite or cannot be ported
-  verdict: NOT PORTABLE AS-IS - declarative patches target the minified bundle
+  (d) ui.chatBarButton                   not-implemented  line 64
 ```
 
 ```console
-$ dcrs-port --class-map assets/class-map.json theme examples/example-theme.css
+$ dcrs-port theme examples/example-theme.css
 theme: Example Theme
   author: dcrs
-  variables declared 12 / resolved 12
+  variables declared 15 / resolved 11
   tier mix
-    variables      2
-    var-refs       1
-    prefix         2
-    hashed         2
-    structural     2
-  class map     2/2 hashed selectors mapped
+    variables    5
+    var-refs     0
+    prefix       2
+    hashed       2
+    structural   2
+  class map     3/3 hashed selectors mapped
   geometry rules 1
   verdict: MOSTLY FULL - variable overrides work; geometry rules need manual work
 ```
 
-Add `--json` to any subcommand for machine-readable output.
+```console
+$ dcrs-port convert examples/example-theme.css
+theme: Example Theme
+  author: dcrs
+  tokens filled 18/36 (50%)
+  dropped: nothing
+wrote examples/example-theme.serein-extension
+```
+
+Add `--json` to any subcommand for machine-readable output. `effects` and `media` exit non-zero when a
+plugin does something that does not port, so they can gate a pipeline rather than only inform one.
 
 ## Design
 
@@ -205,13 +218,35 @@ client needs to avoid looking like one.
 ## Development
 
 ```console
-cargo test --workspace                 # 223 tests, no features
+cargo test --workspace                 # no features
 cargo test --workspace --all-features  # includes the websocket transport
-cargo clippy --workspace --all-targets
+cargo clippy --workspace --all-targets --all-features
 cargo fmt --all --check
 ```
 
 `unsafe_code` is forbidden workspace-wide; clippy runs at `pedantic`.
+
+### Releases
+
+Releases are tag-driven. The tag must be `v<version>` and must match `version` in the root
+`Cargo.toml` — a mismatch fails the build rather than shipping a binary that reports a version it does
+not have.
+
+```console
+# 1. bump the version in Cargo.toml, commit, push, and let CI go green
+# 2. tag that exact commit
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+The workflow builds `dcrs-port` for Linux x86-64, Windows x86-64, and macOS aarch64, **executes each
+artifact** before uploading it, and creates a draft release for you to look at before it goes public.
+
+The smoke test is not ceremony. The capability registry and class map are `include_str!`d into the
+binary rather than shipped beside it, and an earlier build compiled cleanly while shipping no data at
+all — `coverage` reported zero surfaces, which reads exactly like a real answer. The workflow now
+asserts the registry is non-empty, that a conversion produces a package with the manifest the host
+requires, and that a hashed selector still translates.
 
 ### Toolchain note
 
