@@ -108,7 +108,10 @@ jobs:
           # A hashed selector must translate, which proves the class map is embedded too.
           "$bin" theme examples/example-theme.css | grep -q 'hashed'
 
-      - name: Package
+      # Split by shell rather than branching inside bash: Git Bash on the Windows runner has no `zip`,
+      # and PowerShell's Compress-Archive produces a zip Windows users can actually open without
+      # installing anything.
+      - name: Stage the artifact
         shell: bash
         run: |
           set -euo pipefail
@@ -122,12 +125,24 @@ jobs:
           # Cargo.toml declares MIT but no LICENSE file is committed, so this is best-effort rather
           # than a step that fails a release over a missing file.
           if [ -f LICENSE ]; then cp LICENSE "$staging/"; fi
-          if [ "${{ matrix.archive }}" = "zip" ]; then
-            (cd "$staging" && zip -r "../$staging.zip" .)
-          else
-            tar -czf "$staging.tar.gz" "$staging"
-          fi
-          echo "ASSET=$staging.${{ matrix.archive }}" >> "$GITHUB_ENV"
+          echo "STAGING=$staging" >> "$GITHUB_ENV"
+
+      - name: Archive (unix)
+        if: matrix.archive == 'tar.gz'
+        shell: bash
+        run: |
+          set -euo pipefail
+          tar -czf "$STAGING.tar.gz" "$STAGING"
+          echo "ASSET=$STAGING.tar.gz" >> "$GITHUB_ENV"
+
+      - name: Archive (windows)
+        if: matrix.archive == 'zip'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $asset = "$env:STAGING.zip"
+          Compress-Archive -Path "$env:STAGING/*" -DestinationPath $asset
+          "ASSET=$asset" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
       - uses: actions/upload-artifact@v4
         with:
