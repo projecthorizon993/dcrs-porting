@@ -32,11 +32,11 @@ is internals patching.
 
 | Crate | What it does |
 |---|---|
-| [`dcrs-core`](crates/dcrs-core) | Headless client core: gateway session state machine, event bus, cache, rate limiter, credential storage. No UI, no sockets. |
+| [`dcrs-core`](crates/dcrs-core) | Headless client core: gateway session state machine, event bus, cache, rate limiter, credential storage. No UI, no sockets by default. |
 | [`dcrs-theme`](crates/dcrs-theme) | CSS subset parser, variable resolution, class-map translation, and a shadow tree so selectors have something to match. |
 | [`dcrs-compat`](crates/dcrs-compat) | The capability registry: every surface, its class, and whether it is implemented. |
 | [`dcrs-plugins`](crates/dcrs-plugins) | The native plugin ABI. Manifests mirror Vencord's `PluginDef` field-for-field. |
-| [`dcrs-port`](crates/dcrs-port) | The CLI. Analyzes a theme or plugin and prints a portability verdict. |
+| [`dcrs-port`](crates/dcrs-port) | The CLI. Analyzes a theme or plugin and prints a portability verdict, by API surface or by effect. |
 
 ### `dcrs-core`
 
@@ -140,18 +140,73 @@ This crate resolves **values**, not layout. A native immediate-mode GUI has no b
 `width`, `position`, `transform` and negative margins cannot be honoured. `dcrs-port theme` counts
 those rules explicitly rather than pretending they work.
 
-### Mods: the five classes
+### Mods: two axes, not one
 
-`dcrs-compat` classifies every surface. The rule is simple and enforced by the loader:
+Classifying by API call answers "can this plugin call that API natively", which for a mod like
+FakeNitro answers *no to everything* — it is entirely webpack patches. That answer is useless for
+planning, because the user-visible effect is perfectly portable.
+
+So there are two independent questions:
+
+| Axis | Question | FakeNitro |
+|---|---|---|
+| **API surface** (`dcrs-compat`) | can this call be made natively? | no — 11 patches, all class (e) |
+| **Effect** (`dcrs-compat::Capability`) | what does the user actually get? | 14 capability flags + a message-rewrite pass |
+
+`dcrs-port effects` reports the second axis. Every FakeNitro patch overrides a boolean gate and
+replaces it with `return true` — `canStreamQuality`, `canUseClientThemes`, `canUsePremiumAppIcons`,
+`available` on stickers and soundboard sounds. Those are fields in a struct a native client owns,
+not patches.
+
+```console
+$ dcrs-port effects examples/fake-nitro.ts
+  capability gates (14 native flags)
+    high-quality streaming             -> Capabilities::stream_quality
+      overrides canStreamQuality; conditional on settings.store.enableStreamQualityBypass
+    client themes                      -> Capabilities::client_themes
+      overrides canUseClientThemes
+    role-subscription emojis           -> Capabilities::emoji_gate
+      overrides GUILD_SUBSCRIPTION_UNAVAILABLE
+      note: local only: other participants still see a plain link
+  ...
+  verdict: fully implementable as native capability flags
+```
+
+Emoji capabilities carry an explicit caveat: Discord renders the custom emoji for other people from
+its own data, so a local override cannot be made to look the same for everyone. The tool states
+that rather than glossing over it.
+
+### Registry invariants
 
 - `internals` surfaces may be `unsupported`. Replicable classes may not — a surface that is merely
   unbuilt is a tracking gap, not a ceiling.
 - `Registry::coverage()` excludes internals from its denominator, so 100% is reachable.
 
+## Backends
+
+`dcrs-core` has **no required gateway dependency**. `default = []` compiles the protocol, session
+machine, cache and event bus with no TLS stack and no sockets; I/O is opt-in:
+
+```toml
+dcrs-core = { version = "0.1", features = ["websocket"] }   # built-in tungstenite transport
+dcrs-core = { version = "0.1", features = ["compression"] } # zlib-stream framing only
+dcrs-core = { version = "0.1", features = ["rest", "tls-rustls"] }
+```
+
+Any Rust Discord library works instead, behind the `GatewayTransport` trait:
+`discord_client_gateway`, `discordrs`, `twilight`, `serenity`. If it hands you a raw event name and
+a `serde_json::Value` — all of them do — `decode_event` does the rest. See
+[`crates/dcrs-core/src/backend.rs`](crates/dcrs-core/src/backend.rs).
+
+`discord_client_gateway` is the one worth reaching for: it is user-mode (a `capabilities`
+bitfield rather than bot intents) and ships Chrome TLS/HTTP2 impersonation, which is what a native
+client needs to avoid looking like one.
+
 ## Development
 
 ```console
-cargo test --workspace     # 185 tests
+cargo test --workspace                 # 223 tests, no features
+cargo test --workspace --all-features  # includes the websocket transport
 cargo clippy --workspace --all-targets
 cargo fmt --all --check
 ```

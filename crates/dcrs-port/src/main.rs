@@ -7,6 +7,7 @@
 #![allow(clippy::format_push_string)]
 
 mod analyze;
+mod effects;
 mod theme;
 
 use std::path::PathBuf;
@@ -47,6 +48,11 @@ enum Command {
         /// Path to a `.css` or `.theme.css` file.
         path: PathBuf,
     },
+    /// Report what a plugin actually does, independent of how it does it.
+    Effects {
+        /// Path to a plugin source file.
+        path: PathBuf,
+    },
     /// Summarize the capability registry.
     Coverage,
 }
@@ -75,6 +81,21 @@ fn main() -> anyhow::Result<()> {
                 println!("{}", serde_json::to_string_pretty(&report)?);
             } else {
                 print!("{}", report.render());
+            }
+        }
+        Command::Effects { path } => {
+            let source = std::fs::read_to_string(path)
+                .with_context(|| format!("reading {}", path.display()))?;
+            let report = effects::Effects::extract(&source);
+            if cli.json {
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            } else {
+                print!("plugin effects\n{}", report.render());
+            }
+            // A plugin with effects the client cannot reproduce is worth a non-zero exit, so this
+            // can gate a porting pipeline rather than just inform one.
+            if report.needs_manual_work() {
+                std::process::exit(2);
             }
         }
         Command::Coverage => {

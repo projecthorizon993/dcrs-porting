@@ -9,12 +9,37 @@ description = "Headless Discord client core: gateway session, event bus, cache a
 [lints]
 workspace = true
 
+[features]
+# Nothing is on by default. The default build is protocol and state-machine code only,
+# with no TLS stack, no sockets and no compression - which keeps it cheap to compile and
+# cheap to test, and lets the embedder pick a gateway backend.
+default = []
+
+# zlib-stream framing, which Discord uses for every gateway message.
+compression = ["dep:flate2"]
+
+# The built-in WebSocket gateway transport. `compression` is implied because
+# Discord sends `compress=zlib-stream`.
+websocket = ["dep:tungstenite", "compression"]
+
+# Blocking REST, for gateway discovery and the few calls the core makes itself.
+rest = ["dep:ureq"]
+
+# TLS for the `rest` feature. Pick exactly one.
+tls-rustls = ["ureq?/rustls", "ureq?/_tls"]
+tls-native = ["ureq?/native-tls", "ureq?/_tls"]
+
 [dependencies]
 dcrs-compat.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
+
+# Optional backends. See the `websocket` and `rest` features.
+tungstenite = { version = "0.30", optional = true }
+flate2 = { version = "1", optional = true }
+ureq = { version = "3", optional = true, default-features = false }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }

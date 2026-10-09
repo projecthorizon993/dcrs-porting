@@ -399,11 +399,11 @@ pub enum TransportError {
 /// Implemented by the production WebSocket transport and by a mock in tests. Everything above this
 /// trait is deterministic and offline-testable.
 pub trait GatewayTransport: std::fmt::Debug + Send {
-    /// Opens a connection and returns the next inbound frame.
+    /// Opens a connection to `url` and returns the first inbound frame.
     ///
     /// # Errors
     /// Returns [`TransportError::Connect`] if the connection cannot be established.
-    fn connect(&mut self) -> Result<Inbound, TransportError>;
+    fn connect(&mut self, url: &str) -> Result<Inbound, TransportError>;
 
     /// Reads the next inbound frame, blocking until one arrives.
     ///
