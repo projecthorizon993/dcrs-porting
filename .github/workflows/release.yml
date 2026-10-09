@@ -122,6 +122,10 @@ jobs:
           if [ "${{ runner.os }}" = "Windows" ]; then ext=".exe"; fi
           name="dcrs-port-${{ matrix.asset }}$ext"
           cp "target/${{ matrix.target }}/release/dcrs-port$ext" "$name"
+          # A copy does not inherit the exec bit, and a renamed extensionless file has none by
+          # default on Linux and macOS. Release assets are downloaded without it too, which is why
+          # the notes tell people to chmod.
+          if [ "${{ runner.os }}" != "Windows" ]; then chmod +x "$name"; fi
           echo "ASSET=$name" >> "$GITHUB_ENV"
           "$name" --version
 
