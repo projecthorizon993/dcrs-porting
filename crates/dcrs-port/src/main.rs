@@ -9,7 +9,7 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::Context as _;
-use clap::{Parser, Subcommand};
+use clap::{CommandFactory, Parser, Subcommand};
 
 use dcrs_compat::{MediaReport, Registry};
 use dcrs_port::{analyze, convert, effects, theme};
@@ -99,10 +99,45 @@ enum Command {
 }
 
 fn main() -> anyhow::Result<()> {
+    // Bare invocation is a question, not an error. Clap's default here prints help to stderr and
+    // exits 2, which in a terminal reads as a scolding and on double-click is a console that opens
+    // and vanishes before anyone can read it.
+    if std::env::args_os().len() == 1 {
+        println!("{}", Cli::command().render_long_help());
+        wait_for_keypress();
+        return Ok(());
+    }
+
     let cli = Cli::parse();
     let registry = load_registry(cli.registry.as_deref())?;
     let class_map = load_class_map(cli.class_map.as_deref())?;
     dispatch(&cli, &registry, &class_map)
+}
+
+/// Blocks until the user presses a key, but only when there is an interactive console to read from.
+///
+/// The check that matters is not "is this Windows" — it is "will reading stdin block". Piping the
+/// output elsewhere leaves stdin closed or empty, the read returns immediately, and a script never
+/// hangs. Only a real console with someone sitting in front of it waits, which is exactly the
+/// double-click case that was otherwise unreadable.
+#[cfg(windows)]
+fn wait_for_keypress() {
+    use std::io::IsTerminal;
+
+    if !std::io::stdin().is_terminal() {
+        return;
+    }
+    print!("\nPress Enter to close...");
+    let _ = std::io::Write::flush(&mut std::io::stdout());
+    let mut line = String::new();
+    let _ = std::io::stdin().read_line(&mut line);
+    println!();
+}
+
+#[cfg(not(windows))]
+fn wait_for_keypress() {
+    // On Unix the shell stays open after a double-click-equivalent invocation, so there is nothing
+    // to hold open. Pausing here would just look like a hang.
 }
 
 /// Runs one subcommand.
