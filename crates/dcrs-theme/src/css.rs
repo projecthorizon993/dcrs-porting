@@ -453,7 +453,7 @@ pub fn extract_var_refs(value: &str) -> Vec<VarRef> {
         out.push(VarRef {
             name: name.to_owned(),
             fallback,
-        })
+        });
     });
     out
 }

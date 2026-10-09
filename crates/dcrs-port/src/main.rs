@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use anyhow::Context as _;
 use clap::{Parser, Subcommand};
 
-use dcrs_compat::Registry;
+use dcrs_compat::{MediaReport, Registry};
 use dcrs_port::{analyze, convert, effects, theme};
 
 #[derive(Debug, Parser)]
@@ -86,6 +86,14 @@ enum Command {
         #[arg(long)]
         source: Option<String>,
     },
+    /// Report what a plugin does with media, and whether a native client can follow.
+    ///
+    /// Separate from `effects` because the answer is architectural rather than behavioural: a client
+    /// speaks every codec a mod could ask for and still a media plugin often has nothing to land on.
+    Media {
+        /// Path to a plugin source file.
+        path: PathBuf,
+    },
     /// Summarize the capability registry.
     Coverage,
 }
@@ -157,6 +165,21 @@ fn dispatch(
                 source: source.clone(),
             };
             convert_command(cli, path, out.as_deref(), background.as_deref(), overrides)?;
+        }
+        Command::Media { path } => {
+            let source = std::fs::read_to_string(path)
+                .with_context(|| format!("reading {}", path.display()))?;
+            let report = MediaReport::scan(&source);
+            if cli.json {
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            } else {
+                print!("{}", report.render());
+            }
+            // Same reasoning as `effects`: a plugin whose media cannot be reproduced is worth a
+            // non-zero exit so this can gate a pipeline rather than only inform one.
+            if report.detected.is_some() && !report.is_portable() {
+                std::process::exit(2);
+            }
         }
         Command::Coverage => {
             if cli.json {
