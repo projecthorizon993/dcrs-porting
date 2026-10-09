@@ -11,13 +11,12 @@ env:
 
 jobs:
   check:
-    name: ${{ matrix.os }} / ${{ matrix.toolchain }}
+    name: ${{ matrix.os }} / stable
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
-        toolchain: [stable]
 
     steps:
       - uses: actions/checkout@v4
@@ -28,10 +27,23 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y pkg-config libasound2-dev
 
-      - uses: dtolnay/rust-toolchain@master
+      # `dtolnay/rust-toolchain` bootstraps rustup itself, which means downloading
+      # rustup-init.exe on Windows. That download fails intermittently with a curl checksum
+      # error and fails the whole job for reasons unrelated to this code. GitHub's Windows
+      # runners already ship rustup and a stable toolchain, so only the components are added.
+      - name: Install toolchain
+        if: matrix.os != 'windows-latest'
+        uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: ${{ matrix.toolchain }}
+          toolchain: stable
           components: rustfmt, clippy
+
+      - name: Add components to preinstalled toolchain
+        if: matrix.os == 'windows-latest'
+        run: |
+          rustup toolchain install stable --profile minimal --component rustfmt --component clippy
+          rustup default stable
+          rustc --version
 
       - uses: Swatinem/rust-cache@v2
 

@@ -2,7 +2,8 @@
 //!
 //! Drives connect -> Hello -> Identify -> heartbeat -> reconnect, with resume when possible and a
 //! jittered backoff when not. Every transition is driven by an inbound frame and produces
-//! outbound frames through a [`GatewayTransport`], so the whole cycle is deterministic and
+//! outbound frames through a [`GatewayTransport`](crate::gateway::GatewayTransport), so the whole
+//! cycle is deterministic and
 //! testable without a network or a token.
 
 use crate::gateway::{CloseReason, IdentifyConfig, Inbound, OpCode, Outbound, TransportError};
